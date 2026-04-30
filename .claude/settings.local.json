@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import ta; print\\(ta.__file__\\)\")",
+      "Bash(python -c \"import techa; print\\(techa.__file__\\)\")"
+    ]
+  }
+}
