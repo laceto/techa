@@ -7,6 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Adding or modifying indicators in `techa.indicators`** (ta-lib backed, raw OHLCV)
 → READ: `.claude/rules/coding-indicators.md`
 
+**Adding or modifying candlestick pattern scanning or visualization in `techa.patterns`** (ta-lib backed, mplfinance)
+→ READ: `.claude/rules/coding-patterns.md`
+
 **Adding or modifying analytics in `techa.ma` or `techa.breakout`** (relative-price, custom Wilder)
 → READ: `.claude/rules/coding-ma-breakout.md`
 
