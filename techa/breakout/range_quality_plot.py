@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from ta.breakout.range_quality import (
+from techa.breakout.range_quality import (
     BOUNCE_THRESHOLD,
     DEFAULT_MAX_GAP_BARS,
     RETREAT_THRESHOLD,
@@ -32,7 +32,7 @@ from ta.breakout.range_quality import (
     assess_range,
     measure_volatility_compression,
 )
-from ta.utils import ols_slope
+from techa.utils import ols_slope
 
 _DEFAULT_DATA_PATH = Path("data/results/it/analysis_results.parquet")
 

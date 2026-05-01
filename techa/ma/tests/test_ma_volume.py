@@ -34,7 +34,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from ta.ma.volume import (
+from techa.ma.volume import (
     CONFIRMED_VOL_THRESHOLD,
     DEFAULT_SUSTAINED_VOL_THR,
     DEFAULT_VOL_MA_WINDOW,

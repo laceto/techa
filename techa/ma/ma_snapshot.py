@@ -29,8 +29,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from ta.ma.trend_quality import MATrendStrength, assess_ma_trend
-from ta.ma.volume import MAVolumeProfile, assess_ma_volume
+from techa.ma.trend_quality import MATrendStrength, assess_ma_trend
+from techa.ma.volume import MAVolumeProfile, assess_ma_volume
 
 __all__ = [
     "RESULTS_PATH",

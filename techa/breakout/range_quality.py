@@ -60,7 +60,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ta.utils import ols_slope  # Fix 7: no alias — name it what it is
+from techa.utils import ols_slope  # Fix 7: no alias — name it what it is
 
 log = logging.getLogger(__name__)
 

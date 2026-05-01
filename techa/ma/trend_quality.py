@@ -53,7 +53,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from ta.utils import ols_slope_r2
+from techa.utils import ols_slope_r2
 
 log = logging.getLogger(__name__)
 

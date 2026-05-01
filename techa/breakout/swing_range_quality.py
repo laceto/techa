@@ -43,7 +43,7 @@ import logging
 import numpy as np
 import pandas as pd
 
-from ta.breakout.range_quality import (
+from techa.breakout.range_quality import (
     RangeQualityConfig,
     RangeSetup,
     VolatilityState,

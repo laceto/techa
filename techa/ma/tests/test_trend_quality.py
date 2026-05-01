@@ -42,7 +42,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from ta.ma.trend_quality import (
+from techa.ma.trend_quality import (
     ADX_PERIOD,
     ADX_SLOPE_WINDOW,
     ADX_TREND_THRESHOLD,

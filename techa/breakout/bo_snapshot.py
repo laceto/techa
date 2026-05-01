@@ -30,17 +30,17 @@ from pathlib import Path
 
 import pandas as pd
 
-from ta.breakout.range_quality import (
+from techa.breakout.range_quality import (
     RangeSetup,
     VolatilityState,
     assess_range,
     measure_volatility_compression,
 )
-from ta.breakout.swing_range_quality import (
+from techa.breakout.swing_range_quality import (
     assess_swing_range,
     measure_swing_volatility,
 )
-from ta.breakout.volume import VolumeProfile, assess_volume_profile
+from techa.breakout.volume import VolumeProfile, assess_volume_profile
 
 __all__ = [
     "RESULTS_PATH",

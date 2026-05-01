@@ -50,7 +50,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from ta.utils import ols_slope_r2
+from techa.utils import ols_slope_r2
 
 # ---------------------------------------------------------------------------
 # Module-level constants (exported so tests can reference them by name)

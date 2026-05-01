@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from ta.breakout.volume import (
+from techa.breakout.volume import (
     DEFAULT_BREAKOUT_VOL_THR,
     DEFAULT_QUIET_THRESHOLD,
     DEFAULT_VOL_MA_WINDOW,
