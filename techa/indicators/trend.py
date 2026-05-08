@@ -7,8 +7,11 @@ compute_trend(o, h, l, c) -> dict
     All inputs are float64 arrays from _adapter.to_numpy_ohlcv().
     Returns a flat dict of last-bar trend scalars.
 
-ta-lib functions used: SMA, EMA, ADX, PLUS_DI, MINUS_DI.
+ta-lib functions used: SMA, EMA.
 Manual: OLS slope + R² on SMA20 (no ta-lib equivalent).
+
+Excluded (available in techa.ma.ma_snapshot via assess_ma_trend on relative prices):
+    ADX, PLUS_DI, MINUS_DI
 """
 
 from __future__ import annotations
@@ -23,7 +26,6 @@ __all__ = ["compute_trend"]
 
 _SMA_PERIODS = (20, 50, 200)
 _EMA_PERIODS = (20, 50)
-_ADX_PERIOD = 14
 _SLOPE_LOOKBACK = 10
 
 
@@ -47,9 +49,6 @@ def compute_trend(
     sma200 = talib.SMA(c, timeperiod=200)
     ema20  = talib.EMA(c, timeperiod=20)
     ema50  = talib.EMA(c, timeperiod=50)
-    adx    = talib.ADX(h, l, c, timeperiod=_ADX_PERIOD)
-    di_p   = talib.PLUS_DI(h, l, c, timeperiod=_ADX_PERIOD)
-    di_m   = talib.MINUS_DI(h, l, c, timeperiod=_ADX_PERIOD)
 
     price = float(c[-1])
     s20, s50, s200 = last_valid(sma20), last_valid(sma50), last_valid(sma200)
@@ -69,18 +68,15 @@ def compute_trend(
         slope_pct, r2 = float("nan"), float("nan")
 
     return {
-        "sma20":          s20,
-        "sma50":          s50,
-        "sma200":         s200,
-        "ema20":          e20,
-        "ema50":          e50,
+        "sma20":           s20,
+        "sma50":           s50,
+        "sma200":          s200,
+        "ema20":           e20,
+        "ema50":           e50,
         "dist_sma20_pct":  _pct_dist(s20),
         "dist_sma50_pct":  _pct_dist(s50),
         "dist_sma200_pct": _pct_dist(s200),
-        "slope_sma20":    slope_pct,
-        "slope_sma20_r2": r2,
-        "adx":            last_valid(adx),
-        "di_plus":        last_valid(di_p),
-        "di_minus":       last_valid(di_m),
-        "golden_cross":   bool(s50 > s200) if not (np.isnan(s50) or np.isnan(s200)) else False,
+        "slope_sma20":     slope_pct,
+        "slope_sma20_r2":  r2,
+        "golden_cross":    bool(s50 > s200) if not (np.isnan(s50) or np.isnan(s200)) else False,
     }
