@@ -20,6 +20,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 → READ: `.claude/rules/test-failing-rules.md`
 → Overrides `test-rules.md`
 
+**Adding or modifying agents in `techa.agents`** (LangGraph, OpenAI structured output)
+→ READ: `.claude/rules/coding-agents.md`
+
 **Debugging NaN propagation, Wilder smoothing, or signal validation issues**
 → READ: `.claude/rules/debugging-rules.md`
 

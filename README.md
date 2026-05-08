@@ -10,6 +10,7 @@ Technical analysis primitives for trader assistants.
 | `techa.patterns` | TA-Lib + mplfinance | Raw OHLCV DataFrame | Candlestick pattern scanner and visualizer (61 patterns) |
 | `techa.ma` | Manual Wilder | Relative-price parquet | Moving-average crossover analytics |
 | `techa.breakout` | Manual | Relative-price parquet | Range breakout analytics |
+| `techa.agents` | LangGraph + OpenAI | OHLCV / parquet | AI-powered multi-agent technical analysis and pattern reports |
 
 > **Note:** `techa.ma` and `techa.breakout` currently use the old `ta.` import alias internally. Raw OHLCV is not present in their parquet input.
 
@@ -111,6 +112,90 @@ python -m techa.patterns SIE.DE
 python -m techa.patterns SIE.DE 2020-01-01 2024-01-01
 python -m techa.patterns SIE.DE 2020-01-01 2024-01-01 save
 ```
+
+---
+
+## `techa.agents`
+
+LangGraph multi-agent system for AI-powered technical analysis. Both agents use OpenAI structured output (`gpt-4.1-nano`). Set `OPENAI_API_KEY` before use.
+
+### `techa.agents.ta` — Technical Analysis Agent
+
+Single-ticker analysis: MA crossovers, breakouts, and indicator context.
+
+```python
+from techa.agents.ta import create_manager
+
+# Parquet mode (default) — reads from data/results/it/analysis_results.parquet
+graph = create_manager("A2A.MI", analysis_date="2024-06-30")
+result = graph.invoke(graph._initial_state)
+print(result["final_output"])
+
+# Live mode — downloads OHLCV via yfinance
+graph = create_manager("ENI.MI", data_source="live", benchmark="FTSEMIB.MI")
+result = graph.invoke(graph._initial_state)
+print(result["final_output"])
+```
+
+**Arguments:**
+
+| Argument | Default | Description |
+|---|---|---|
+| `symbol` | required | Ticker to analyse (e.g. `"A2A.MI"`) |
+| `analysis_date` | `None` | ISO date ceiling; `None` → latest available bar |
+| `data_source` | `"parquet"` | `"parquet"` or `"live"` |
+| `benchmark` | `"FTSEMIB.MI"` | Benchmark ticker (for relative-price computation in live mode) |
+| `fx` | `None` | Optional FX ticker for currency conversion (e.g. `"EURUSD=X"`) |
+| `checkpointer` | `None` | LangGraph checkpointer for persistence / resumption |
+
+### `techa.agents.patterns` — Candlestick Pattern Scan Agent
+
+Multi-ticker scan: last-bar candlestick hits plus recent pattern history, structured per-ticker analysis.
+
+```python
+from techa.agents.patterns import create_pattern_agent
+
+# Parquet mode — reads ropen/rhigh/rlow/rclose from analysis_results.parquet
+graph = create_pattern_agent(["A2A.MI", "ENI.MI"], analysis_date="2024-06-30")
+result = graph.invoke(graph._initial_state)
+print(result["final_output"])
+
+# Live mode — downloads raw OHLCV via yfinance
+graph = create_pattern_agent(
+    ["A2A.MI", "ENI.MI"],
+    data_source="live",
+    signal_filter="bear",
+    lookback_bars=30,
+)
+result = graph.invoke(graph._initial_state)
+print(result["final_output"])
+```
+
+**Arguments:**
+
+| Argument | Default | Description |
+|---|---|---|
+| `tickers` | required | List of tickers to scan (e.g. `["A2A.MI", "ENI.MI"]`) |
+| `analysis_date` | `None` | ISO date ceiling; `None` → latest available bar (parquet mode only) |
+| `data_source` | `"parquet"` | `"parquet"` or `"live"` |
+| `signal_filter` | `"all"` | `"all"`, `"bull"` (+100 only), or `"bear"` (-100 only) |
+| `lookback_days` | `365` | Calendar days of OHLCV history to download (live mode only) |
+| `lookback_bars` | `20` | Trading bars of recent pattern history sent to the model (≈ 1 month) |
+| `benchmark` | `"FTSEMIB.MI"` | Accepted for API consistency; not used by pattern nodes |
+| `fx` | `None` | Accepted for API consistency; not used by pattern nodes |
+| `checkpointer` | `None` | LangGraph checkpointer for persistence / resumption |
+
+**LLM output fields (structured via Pydantic):**
+
+| Field | Description |
+|---|---|
+| `description` | 3-5 sentence narrative: tickers fired, net bull/bear balance, notable confluences |
+| `total_hits` / `bullish_count` / `bearish_count` | Last-bar hit counts |
+| `recent_activity` | Per-ticker: recent hit counts, pattern names, activity trend (increasing / stable / decreasing) |
+| `ticker_summaries` | Per-ticker: patterns fired, net bias, conviction (high / medium / low), verdict |
+| `top_actionable` | Tickers with ≥ 2 same-direction patterns (medium/high conviction) |
+| `watchlist` | Tickers with single-bar or mixed signals |
+| `summary` | One-sentence net market message |
 
 ---
 
