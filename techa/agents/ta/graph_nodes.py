@@ -2,14 +2,14 @@
 agents/graph_nodes.py — Node implementations for the TechnicalAnalysis graph.
 
 Nodes:
-  prepare_node         — loads data and builds breakout + MA snapshots for one symbol,
-                         serialises everything to payload_json.
-  create_subgraph()    — factory: returns a compiled single-node subgraph that calls
-                         one AI trader (ask_bo_trader or ask_ma_trader).
-  _call_synthesis_llm  — calls the LLM once to compile both AI reports into a final brief.
-  synthesise_node      — formats inputs and delegates to _call_synthesis_llm.
+  prepare_node        — loads data and builds breakout + MA snapshots for one symbol;
+                        stores the result as a native dict in state["payload"].
+  worker_node         — single shared node; dispatched by Send with agent_id injected;
+                        calls ask_bo_trader or ask_ma_trader and appends a WorkerResult.
+  _call_synthesis_llm — calls the LLM once to compile both AI reports into a final brief.
+  synthesise_node     — reads state["results"], formats inputs, delegates to _call_synthesis_llm.
 
-Invariant: payload_json is the sole data channel from prepare_node to workers.
+Invariant: state["payload"] is the sole data channel from prepare_node to worker_node.
            No worker reads from disk or network.
 """
 
@@ -18,8 +18,6 @@ from __future__ import annotations
 import json
 import logging
 import time
-
-from langgraph.graph import END, START, StateGraph
 
 from techa.agents._common import RESULTS_PATH
 from techa.agents.ta.graph_state import TechnicalAnalysisState
@@ -123,7 +121,7 @@ MA crossover analysis: {ma_analysis}
 
 def prepare_node(state: TechnicalAnalysisState) -> dict:
     """
-    Load data for one symbol, build breakout and MA snapshots, serialise to payload_json.
+    Load data for one symbol, build breakout and MA snapshots, store as native dict.
 
     Raises:
         ValueError: If the symbol cannot be found or snapshots cannot be built.
@@ -159,53 +157,50 @@ def prepare_node(state: TechnicalAnalysisState) -> dict:
     }
 
     return {
-        "payload_json":  json.dumps(payload),
+        "payload":       payload,
         "resolved_date": resolved_date,
     }
 
 
 # ---------------------------------------------------------------------------
-# Subgraph factory
+# worker_node — single shared node dispatched by Send
 # ---------------------------------------------------------------------------
 
 
-def create_subgraph(worker_name: str):
+def worker_node(state: TechnicalAnalysisState) -> dict:
     """
-    Build a compiled single-node subgraph that calls one AI trader.
+    Call the appropriate AI trader based on agent_id injected by the Send dispatcher.
 
-    The subgraph never raises — exceptions are caught and returned as
-    {"error": str(exc)} so the other worker can continue.
+    Never raises — exceptions are caught and stored as a WorkerResult with error set,
+    so the other dispatched worker can continue and synthesise_node always runs.
 
     Args:
-        worker_name: "breakout" → calls ask_bo_trader; "ma" → calls ask_ma_trader.
+        state: Must contain "agent_id" (injected by Send) and "payload" (set by prepare_node).
+
+    Returns:
+        {"results": [WorkerResult]} — appended to state via the add reducer.
     """
-    result_key = f"{worker_name}_result"
+    agent_id = state["agent_id"]
+    payload  = state["payload"]
+    symbol   = payload["symbol"]
 
-    def run_worker(state: TechnicalAnalysisState) -> dict:
-        try:
-            payload = json.loads(state["payload_json"])
-            symbol  = payload["symbol"]
-            if worker_name == "breakout":
-                snapshot = payload["breakout_snapshot"]
-                result   = ask_bo_trader(snapshot, ticker=symbol)
-                log.info("[%s] analysis complete for %s", worker_name, symbol)
-                return {result_key: result.model_dump()}
-            elif worker_name == "ma":
-                snapshot = payload["ma_snapshot"]
-                result   = ask_ma_trader(snapshot, ticker=symbol)
-                log.info("[%s] analysis complete for %s", worker_name, symbol)
-                return {result_key: result.model_dump()}
-            else:
-                raise ValueError(f"Unknown worker: {worker_name!r}")
-        except Exception as exc:
-            log.error("[%s] worker failed: %s", worker_name, exc, exc_info=True)
-            return {result_key: {"error": str(exc)}}
+    try:
+        if agent_id == "breakout":
+            snapshot = payload["breakout_snapshot"]
+            result   = ask_bo_trader(snapshot, ticker=symbol)
+            log.info("[worker] %s analysis complete for %s", agent_id, symbol)
+        elif agent_id == "ma":
+            snapshot = payload["ma_snapshot"]
+            result   = ask_ma_trader(snapshot, ticker=symbol)
+            log.info("[worker] %s analysis complete for %s", agent_id, symbol)
+        else:
+            raise ValueError(f"Unknown agent_id: {agent_id!r}")
 
-    graph = StateGraph(TechnicalAnalysisState)
-    graph.add_node("run_worker", run_worker)
-    graph.add_edge(START, "run_worker")
-    graph.add_edge("run_worker", END)
-    return graph.compile()
+        return {"results": [{"agent_id": agent_id, "data": result.model_dump(), "error": None}]}
+
+    except Exception as exc:
+        log.error("[worker] %s failed: %s", agent_id, exc, exc_info=True)
+        return {"results": [{"agent_id": agent_id, "data": {}, "error": str(exc)}]}
 
 
 # ---------------------------------------------------------------------------
@@ -252,19 +247,19 @@ def synthesise_node(state: TechnicalAnalysisState) -> dict:
     Never raises — missing or errored worker results are passed as "unavailable"
     to the LLM so it can still produce a partial report.
     """
-    ticker          = state.get("symbol", "unknown")
-    breakout_result = state.get("breakout_result") or {}
-    ma_result       = state.get("ma_result") or {}
+    ticker     = state.get("symbol", "unknown")
+    results_by_id = {r["agent_id"]: r for r in state.get("results", [])}
 
-    def _fmt(result: dict) -> str:
-        if not result:
+    def _fmt(agent_id: str) -> str:
+        r = results_by_id.get(agent_id)
+        if not r:
             return "unavailable"
-        if "error" in result:
-            return f"unavailable — {result['error']}"
-        return json.dumps(result, indent=2)
+        if r.get("error"):
+            return f"unavailable — {r['error']}"
+        return json.dumps(r["data"], indent=2)
 
-    bo_analysis = _fmt(breakout_result)
-    ma_analysis = _fmt(ma_result)
+    bo_analysis = _fmt("breakout")
+    ma_analysis = _fmt("ma")
 
     log.info("[synthesise] generating report for %s", ticker)
     brief = _call_synthesis_llm(ticker, bo_analysis, ma_analysis)

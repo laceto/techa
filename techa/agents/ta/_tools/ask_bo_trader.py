@@ -53,14 +53,11 @@ import logging
 import sys
 from pathlib import Path
 
-import openai
-from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from typing import Literal
 
+from techa.agents._llm import invoke_structured, MODEL
 from techa.breakout.bo_snapshot import RESULTS_PATH, build_snapshot_from_parquet
-
-load_dotenv()  # reads .env from the project root into os.environ
 
 # Windows CLI only — Jupyter's OutStream has no reconfigure().
 if hasattr(sys.stdout, "reconfigure"):
@@ -294,8 +291,6 @@ class TraderAnalysis(BaseModel):
 # OpenAI call
 # ---------------------------------------------------------------------------
 
-MODEL = "gpt-4.1-nano"
-
 
 def ask_bo_trader(snapshot: dict, ticker: str, question: str | None = None) -> TraderAnalysis:
     """
@@ -312,25 +307,20 @@ def ask_bo_trader(snapshot: dict, ticker: str, question: str | None = None) -> T
     Returns:
         TraderAnalysis Pydantic model parsed directly from the model response.
     """
-    client = openai.OpenAI()
-
     user_content = f"Ticker: {ticker}\n\nSnapshot:\n{json.dumps(snapshot, indent=2)}"
     if question:
         user_content += f"\n\nQuestion: {question}"
 
     log.info("Sending snapshot for %s to %s (%d fields)", ticker, MODEL, len(snapshot))
 
-    response = client.beta.chat.completions.parse(
-        model=MODEL,
-        max_tokens=1024,
+    return invoke_structured(
+        TraderAnalysis,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_content},
+            {"role": "user",   "content": user_content},
         ],
-        response_format=TraderAnalysis,
+        max_tokens=1024,
     )
-
-    return response.choices[0].message.parsed
 
 
 # ---------------------------------------------------------------------------

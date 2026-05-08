@@ -2,14 +2,18 @@
 agents/graph_state.py — Typed state for the TechnicalAnalysis LangGraph.
 
 Single source of truth for all fields that flow between nodes.
-Every field uses the _last reducer so parallel branches can merge without conflict.
+Scalar/dict fields use _last; the results accumulator uses the add reducer
+so parallel worker_node invocations (via Send) can each append without conflict.
 """
 
 from __future__ import annotations
 
+from operator import add
 from typing import Annotated, Optional
 
 from typing_extensions import TypedDict
+
+from techa.agents._common import WorkerResult
 
 
 def _last(a, b):  # noqa: ANN001
@@ -28,10 +32,13 @@ class TechnicalAnalysisState(TypedDict, total=False):
     fx:            Annotated[Optional[str], _last]  # FX ticker for currency conversion (e.g. "EURUSD=X")
     # None → no FX conversion (stock and benchmark share the same currency)
 
+    # ── Injected by Send dispatcher ────────────────────────────────────────────
+    agent_id: Annotated[Optional[str], _last]  # set per-dispatch; identifies the active worker
+
     # ── Set by prepare_node ────────────────────────────────────────────────────
-    resolved_date: Annotated[str, _last]  # actual date resolved from the data
-    payload_json:  Annotated[str, _last]
-    # payload_json shape:
+    resolved_date: Annotated[str,            _last]  # actual date resolved from the data
+    payload:       Annotated[Optional[dict], _last]
+    # payload shape:
     # {
     #   "date":               "YYYY-MM-DD",
     #   "symbol":             str,
@@ -39,10 +46,9 @@ class TechnicalAnalysisState(TypedDict, total=False):
     #   "ma_snapshot":        dict,   ← ta.ma.ma_snapshot.build_snapshot()
     # }
 
-    # ── Set by subgraph workers ────────────────────────────────────────────────
-    breakout_result: Annotated[Optional[dict], _last]  # TraderAnalysis.model_dump()
-    ma_result:       Annotated[Optional[dict], _last]  # MATraderAnalysis.model_dump()
-    # {"error": str} when the worker caught an exception
+    # ── Accumulated by worker_node (one entry per dispatched agent) ────────────
+    results: Annotated[list[WorkerResult], add]
+    # Each WorkerResult: {"agent_id": str, "data": dict, "error": str | None}
 
     # ── Set by synthesise_node ─────────────────────────────────────────────────
     final_output: Annotated[str, _last]  # both AI reports formatted side by side

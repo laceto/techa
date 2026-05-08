@@ -61,13 +61,10 @@ import sys
 from pathlib import Path
 from typing import Literal
 
-import openai
-from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
+from techa.agents._llm import invoke_structured, MODEL
 from techa.ma.ma_snapshot import RESULTS_PATH, build_snapshot_from_parquet
-
-load_dotenv()
 
 # Windows CLI only — Jupyter's OutStream has no reconfigure().
 if hasattr(sys.stdout, "reconfigure"):
@@ -292,8 +289,6 @@ class MATraderAnalysis(BaseModel):
 # OpenAI call
 # ---------------------------------------------------------------------------
 
-MODEL = "gpt-4.1-nano"
-
 
 def ask_ma_trader(
     snapshot: dict, ticker: str, question: str | None = None
@@ -309,25 +304,20 @@ def ask_ma_trader(
     Returns:
         MATraderAnalysis Pydantic model parsed from the model response.
     """
-    client = openai.OpenAI()
-
     user_content = f"Ticker: {ticker}\n\nSnapshot:\n{json.dumps(snapshot, indent=2)}"
     if question:
         user_content += f"\n\nQuestion: {question}"
 
     log.info("Sending MA snapshot for %s to %s (%d fields)", ticker, MODEL, len(snapshot))
 
-    response = client.beta.chat.completions.parse(
-        model=MODEL,
-        max_tokens=1024,
+    return invoke_structured(
+        MATraderAnalysis,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user",   "content": user_content},
         ],
-        response_format=MATraderAnalysis,
+        max_tokens=1024,
     )
-
-    return response.choices[0].message.parsed
 
 
 # ---------------------------------------------------------------------------

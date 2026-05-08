@@ -2,14 +2,18 @@
 agents/patterns/graph_state.py — Typed state for the PatternScan LangGraph.
 
 Single source of truth for all fields that flow between nodes.
-Every field uses the _last reducer so parallel branches can merge without conflict.
+Scalar/dict fields use _last; the results accumulator uses the add reducer
+so parallel worker_node invocations (via Send) can each append without conflict.
 """
 
 from __future__ import annotations
 
+from operator import add
 from typing import Annotated, Optional
 
 from typing_extensions import TypedDict
+
+from techa.agents._common import WorkerResult
 
 
 def _last(a, b):  # noqa: ANN001
@@ -28,10 +32,13 @@ class PatternScanState(TypedDict, total=False):
     benchmark:     Annotated[str,            _last]  # accepted for API consistency; not used by pattern nodes
     fx:            Annotated[Optional[str],  _last]  # accepted for API consistency; not used by pattern nodes
 
+    # ── Injected by Send dispatcher ────────────────────────────────────────────
+    agent_id: Annotated[Optional[str], _last]  # set per-dispatch; identifies the active worker
+
     # ── Set by prepare_node ────────────────────────────────────────────────────
-    scan_date:    Annotated[str,            _last]   # ISO date of the scan run
-    payload_json: Annotated[str,            _last]
-    # payload_json shape:
+    scan_date: Annotated[str,            _last]  # ISO date of the scan run
+    payload:   Annotated[Optional[dict], _last]
+    # payload shape:
     # {
     #   "tickers":       list[str],
     #   "scan_date":     "YYYY-MM-DD",
@@ -42,9 +49,9 @@ class PatternScanState(TypedDict, total=False):
     #   "lookback_bars": int,
     # }
 
-    # ── Set by pattern worker ──────────────────────────────────────────────────
-    pattern_result: Annotated[Optional[dict], _last]  # PatternScanAnalysis.model_dump()
-    # {"error": str} when the worker caught an exception
+    # ── Accumulated by worker_node (one entry per dispatched agent) ────────────
+    results: Annotated[list[WorkerResult], add]
+    # Each WorkerResult: {"agent_id": str, "data": dict, "error": str | None}
 
     # ── Set by synthesise_node ─────────────────────────────────────────────────
     final_output: Annotated[str, _last]  # formatted scan report

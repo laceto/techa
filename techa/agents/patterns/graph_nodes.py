@@ -3,23 +3,21 @@ agents/patterns/graph_nodes.py — Node implementations for the PatternScan grap
 
 Nodes:
   prepare_node    — loads OHLCV for each ticker (parquet or live), calls scan_last_bar,
-                    serialises the hits payload to payload_json.
-  create_subgraph — factory: returns a compiled single-node subgraph that calls
-                    ask_pattern_trader.
-  synthesise_node — formats pattern_result into a readable final text report.
+                    stores the result as a native dict in state["payload"].
+  worker_node     — single shared node dispatched by Send with agent_id injected;
+                    calls ask_pattern_trader and appends a WorkerResult.
+  synthesise_node — reads state["results"], formats the structured output into a text report.
 
-Invariant: payload_json is the sole data channel from prepare_node to workers.
+Invariant: state["payload"] is the sole data channel from prepare_node to worker_node.
            No worker reads from disk or network.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 
 import pandas as pd
-from langgraph.graph import END, START, StateGraph
 
 from techa.agents._common import RESULTS_PATH
 from techa.agents.patterns.graph_state import PatternScanState
@@ -42,7 +40,7 @@ _DEFAULT_LOOKBACK_DAYS = 365
 
 def prepare_node(state: PatternScanState) -> dict:
     """
-    Load OHLCV for each ticker, run scan_last_bar, serialise to payload_json.
+    Load OHLCV for each ticker, run scan_last_bar, store payload as native dict.
 
     Mode A (parquet): reads ropen/rhigh/rlow/rclose from analysis_results.parquet,
                       anchored to analysis_date (or latest bar if None).
@@ -53,7 +51,7 @@ def prepare_node(state: PatternScanState) -> dict:
                "signal_filter", "lookback_days", "lookback_bars".
 
     Returns:
-        Dict updating "payload_json" and "scan_date".
+        Dict updating "payload" and "scan_date".
     """
     t0            = time.perf_counter()
     tickers       = state["tickers"]
@@ -124,47 +122,45 @@ def prepare_node(state: PatternScanState) -> dict:
     }
 
     return {
-        "payload_json": json.dumps(payload),
-        "scan_date":    scan_date,
+        "payload":   payload,
+        "scan_date": scan_date,
     }
 
 
 # ---------------------------------------------------------------------------
-# Subgraph factory
+# worker_node — single shared node dispatched by Send
 # ---------------------------------------------------------------------------
 
 
-def create_subgraph(worker_name: str):
+def worker_node(state: PatternScanState) -> dict:
     """
-    Build a compiled single-node subgraph that calls one worker tool.
+    Call ask_pattern_trader based on agent_id injected by the Send dispatcher.
 
-    The subgraph never raises — exceptions are caught and returned as
-    {"error": str(exc)} so the graph can continue to synthesise_node.
+    Never raises — exceptions are caught and stored as a WorkerResult with error set,
+    so synthesise_node always runs.
 
     Args:
-        worker_name: Currently only "pattern" is supported.
+        state: Must contain "agent_id" (injected by Send) and "payload" (set by prepare_node).
+
+    Returns:
+        {"results": [WorkerResult]} — appended to state via the add reducer.
     """
-    result_key = f"{worker_name}_result"
+    agent_id = state["agent_id"]
+    payload  = state["payload"]
+    tickers  = payload.get("tickers", [])
 
-    def run_worker(state: PatternScanState) -> dict:
-        try:
-            payload = json.loads(state["payload_json"])
-            tickers = payload.get("tickers", [])
-            if worker_name == "pattern":
-                result = ask_pattern_trader(payload, tickers=tickers)
-                log.info("[%s] analysis complete (%d tickers)", worker_name, len(tickers))
-                return {result_key: result.model_dump()}
-            else:
-                raise ValueError(f"Unknown worker: {worker_name!r}")
-        except Exception as exc:
-            log.error("[%s] worker failed: %s", worker_name, exc, exc_info=True)
-            return {result_key: {"error": str(exc)}}
+    try:
+        if agent_id == "pattern":
+            result = ask_pattern_trader(payload, tickers=tickers)
+            log.info("[worker] %s analysis complete (%d tickers)", agent_id, len(tickers))
+        else:
+            raise ValueError(f"Unknown agent_id: {agent_id!r}")
 
-    graph = StateGraph(PatternScanState)
-    graph.add_node("run_worker", run_worker)
-    graph.add_edge(START, "run_worker")
-    graph.add_edge("run_worker", END)
-    return graph.compile()
+        return {"results": [{"agent_id": agent_id, "data": result.model_dump(), "error": None}]}
+
+    except Exception as exc:
+        log.error("[worker] %s failed: %s", agent_id, exc, exc_info=True)
+        return {"results": [{"agent_id": agent_id, "data": {}, "error": str(exc)}]}
 
 
 # ---------------------------------------------------------------------------
@@ -176,19 +172,23 @@ def synthesise_node(state: PatternScanState) -> dict:
     """
     Format the pattern worker's structured result into a readable text report.
 
-    Never raises — missing or errored results produce a partial report.
+    Never raises — missing or errored results produce a graceful partial report.
     """
-    tickers        = state.get("tickers", [])
-    scan_date      = state.get("scan_date", "unknown")
-    pattern_result = state.get("pattern_result") or {}
+    tickers   = state.get("tickers", [])
+    scan_date = state.get("scan_date", "unknown")
+
+    results_by_id = {r["agent_id"]: r for r in state.get("results", [])}
+    pattern_r     = results_by_id.get("pattern")
 
     sep = "=" * 60
 
-    if not pattern_result:
+    if not pattern_r:
         return {"final_output": f"{sep}\n  Pattern scan returned no results.\n{sep}"}
 
-    if "error" in pattern_result:
-        return {"final_output": f"{sep}\n  Pattern scan failed: {pattern_result['error']}\n{sep}"}
+    if pattern_r.get("error"):
+        return {"final_output": f"{sep}\n  Pattern scan failed: {pattern_r['error']}\n{sep}"}
+
+    pattern_result = pattern_r["data"]
 
     lines = [
         sep,

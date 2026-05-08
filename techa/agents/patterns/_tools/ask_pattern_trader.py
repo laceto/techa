@@ -33,11 +33,9 @@ import logging
 import sys
 from typing import Literal
 
-import openai
-from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
-load_dotenv()
+from techa.agents._llm import invoke_structured, MODEL
 
 # Windows CLI only — Jupyter's OutStream has no reconfigure().
 if hasattr(sys.stdout, "reconfigure"):
@@ -184,9 +182,6 @@ class PatternScanAnalysis(BaseModel):
 # OpenAI call
 # ---------------------------------------------------------------------------
 
-MODEL = "gpt-4.1-nano"
-
-
 def ask_pattern_trader(
     payload: dict,
     tickers: list[str],
@@ -206,8 +201,6 @@ def ask_pattern_trader(
     Returns:
         PatternScanAnalysis Pydantic model parsed directly from the model response.
     """
-    client = openai.OpenAI()
-
     user_content = (
         f"Tickers scanned: {', '.join(tickers)}\n\n"
         f"Scan payload:\n{json.dumps(payload, indent=2)}"
@@ -222,14 +215,11 @@ def ask_pattern_trader(
         len(tickers),
     )
 
-    response = client.beta.chat.completions.parse(
-        model=MODEL,
-        max_tokens=2048,
+    return invoke_structured(
+        PatternScanAnalysis,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user",   "content": user_content},
         ],
-        response_format=PatternScanAnalysis,
+        max_tokens=2048,
     )
-
-    return response.choices[0].message.parsed

@@ -1,4 +1,7 @@
-# techa/agents — Full Source Code
+# techa/agents — Full Source Code (pre-refactor snapshot)
+
+> **Stale.** This file was generated before the Dynamic Scalability Patterns refactor.
+> For the current architecture see `DYNAMIC_PATTERNS_REVIEW.md` and read the source files directly.
 
 ## Directory structure
 
