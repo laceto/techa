@@ -41,16 +41,22 @@ snap = build_snapshot_from_parquet(
 | Key | Type | Notes |
 |---|---|---|
 | `price` | float | Last close |
-| `rsi` | float\|nan | [0, 100] |
-| `rsi_zone` | str | `"overbought"` / `"neutral"` / `"oversold"` / `"n/a"` |
-| `adx` | float\|nan | > 25 = trending |
-| `macd_hist` | float\|nan | positive = bullish |
-| `atr_pct` | float\|nan | NATR — ATR / close × 100 |
-| `bb_upper/mid/lower` | float\|nan | Bollinger bands |
-| `hist_vol_20d` | float\|nan | Annualised historical volatility (%) |
-| `vol_vs_ma20` | float\|nan | Last-bar volume / 20-bar mean |
+| `golden_cross` | bool | SMA50 > SMA200 |
+| `dist_sma20/50/200_pct` | float\|nan | % distance from each MA |
 | `slope_sma20` | float\|nan | OLS slope of SMA20 (%/bar) |
 | `slope_sma20_r2` | float | R² for slope; < 0.3 = noise |
+| `macd_hist` | float\|nan | positive = bullish |
+| `stoch_k/d` | float\|nan | Slow stochastic |
+| `roc_10d/20d` | float\|nan | Rate of change (%) |
+| `atr_pct` | float\|nan | NATR — normalised ATR (%) |
+| `bb_upper/mid/lower` | float\|nan | Bollinger bands |
+| `bb_pct_b` | float\|nan | Position within bands [0, 1] |
+| `hist_vol_20d` | float\|nan | Annualised historical volatility (%) |
+| `obv` | float | On-balance volume |
+| `ad` | float | Chaikin A/D line |
+| `adosc` | float | Chaikin A/D oscillator |
+
+> RSI, ADX/DI, and vol_vs_ma20 are computed on relative-price data and available via `techa.ma` and `techa.breakout` snapshots.
 
 Group snapshots across many tickers:
 
