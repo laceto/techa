@@ -8,6 +8,7 @@
 ```
 techa/agents/
 ├── _common.py
+├── _llm.py
 ├── ta/
 │   ├── agent.py
 │   ├── graph_state.py
@@ -17,14 +18,24 @@ techa/agents/
 │       ├── prepare_tools.py
 │       ├── ask_bo_trader.py
 │       └── ask_ma_trader.py
-└── patterns/
-    ├── agent.py
-    ├── graph_state.py
-    ├── graph_nodes.py
-    ├── _subagents.py
+├── patterns/
+│   ├── agent.py
+│   ├── graph_state.py
+│   ├── graph_nodes.py
+│   ├── _subagents.py
+│   └── _tools/
+│       ├── prepare_tools.py
+│       └── ask_pattern_trader.py
+└── indicators/
+    ├── agent.py               create_indicator_agent() — live (default) or parquet mode
+    ├── graph_state.py         IndicatorAnalysisState
+    ├── graph_nodes.py         prepare_node, worker_node, synthesise_node
+    ├── _subagents.py          WORKER_NAMES = ["trend", "momentum", "volatility"]
     └── _tools/
         ├── prepare_tools.py
-        └── ask_pattern_trader.py
+        ├── ask_trend_analyst.py
+        ├── ask_momentum_analyst.py
+        └── ask_volatility_analyst.py
 ```
 
 ---

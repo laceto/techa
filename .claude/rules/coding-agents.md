@@ -9,7 +9,7 @@ You are working in `techa/agents/`. This subpackage is a LangGraph multi-agent s
 techa/agents/
 ├── _common.py                 WorkerResult TypedDict; RESULTS_PATH, HISTORY_BARS, _read_parquet_dated()
 ├── _llm.py                    Centralized OpenAI client: MODEL, _client, invoke_structured()
-├── ta/                        Single-ticker TA agent (MA crossovers, breakouts, indicators)
+├── ta/                        Single-ticker TA agent (MA crossovers, breakouts)
 │   ├── agent.py               create_manager() factory; _dispatcher() Send fan-out
 │   ├── graph_state.py         TechnicalAnalysisState (TypedDict)
 │   ├── graph_nodes.py         prepare_node, worker_node, synthesise_node
@@ -18,18 +18,36 @@ techa/agents/
 │       ├── prepare_tools.py   load_analysis_data(), load_live_data()
 │       ├── ask_bo_trader.py
 │       └── ask_ma_trader.py
-└── patterns/                  Multi-ticker candlestick pattern scan agent
-    ├── agent.py               create_pattern_agent() factory; _dispatcher() Send fan-out
-    ├── graph_state.py         PatternScanState (TypedDict)
+├── patterns/                  Multi-ticker candlestick pattern scan agent
+│   ├── agent.py               create_pattern_agent() factory; _dispatcher() Send fan-out
+│   ├── graph_state.py         PatternScanState (TypedDict)
+│   ├── graph_nodes.py         prepare_node, worker_node, synthesise_node
+│   ├── _subagents.py          WORKER_NAMES only (no build_subgraphs)
+│   └── _tools/
+│       ├── prepare_tools.py   load_ohlcv_from_parquet(), download_ohlcv_live()
+│       └── ask_pattern_trader.py
+└── indicators/                Single-ticker indicator analysis agent (trend, momentum, volatility)
+    ├── agent.py               create_indicator_agent() factory; _dispatcher() Send fan-out
+    ├── graph_state.py         IndicatorAnalysisState (TypedDict)
     ├── graph_nodes.py         prepare_node, worker_node, synthesise_node
-    ├── _subagents.py          WORKER_NAMES only (no build_subgraphs)
+    ├── _subagents.py          WORKER_NAMES = ["trend", "momentum", "volatility"]
     └── _tools/
         ├── prepare_tools.py   load_ohlcv_from_parquet(), download_ohlcv_live()
-        └── ask_pattern_trader.py
+        ├── ask_trend_analyst.py      TrendAnalysis schema + ask_trend_analyst()
+        ├── ask_momentum_analyst.py   MomentumAnalysis schema + ask_momentum_analyst()
+        └── ask_volatility_analyst.py VolatilityAnalysis schema + ask_volatility_analyst()
 ```
 
 ## Commands
 ```bash
+# run an indicator analysis (live mode, default)
+python -c "
+from techa.agents.indicators import create_indicator_agent
+g = create_indicator_agent('PST.MI')
+r = g.invoke(g._initial_state)
+print(r['final_output'])
+"
+
 # run a pattern scan (live mode)
 python -c "
 from techa.agents.patterns import create_pattern_agent

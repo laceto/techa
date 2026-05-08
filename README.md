@@ -123,7 +123,43 @@ python -m techa.patterns SIE.DE 2020-01-01 2024-01-01 save
 
 ## `techa.agents`
 
-LangGraph multi-agent system for AI-powered technical analysis. Both agents use OpenAI structured output (`gpt-4.1-nano`). Set `OPENAI_API_KEY` before use.
+LangGraph multi-agent system for AI-powered technical analysis. All agents use OpenAI structured output (`gpt-4.1-nano`). Set `OPENAI_API_KEY` before use.
+
+### `techa.agents.indicators` — Indicator Analysis Agent
+
+Single-ticker analysis from raw OHLCV: trend (MA alignment), momentum (MACD/stochastic/ROC), and volatility & volume flow (ATR/BB/Chaikin). Three workers run in parallel via `Send`; synthesis via `gpt-4o`.
+
+```python
+from techa.agents.indicators import create_indicator_agent
+
+# Live mode (default) — downloads OHLCV via yfinance
+graph = create_indicator_agent("PST.MI")
+result = graph.invoke(graph._initial_state)
+print(result["final_output"])
+
+# Parquet mode — reads ropen/rhigh/rlow/rclose from analysis_results.parquet
+graph = create_indicator_agent("ENI.MI", data_source="parquet", analysis_date="2024-06-30")
+result = graph.invoke(graph._initial_state)
+print(result["final_output"])
+```
+
+**Arguments:**
+
+| Argument | Default | Description |
+|---|---|---|
+| `symbol` | required | Ticker to analyse (e.g. `"PST.MI"`) |
+| `analysis_date` | `None` | ISO date ceiling; `None` → latest bar (parquet mode only) |
+| `data_source` | `"live"` | `"live"` (yfinance) or `"parquet"` (relative-price OHLCV) |
+| `lookback_days` | `365` | Calendar days of OHLCV history to download (live mode only) |
+| `checkpointer` | `None` | LangGraph checkpointer for persistence / resumption |
+
+**Structured output per worker:**
+
+| Worker | Pydantic model | Key fields |
+|---|---|---|
+| `trend` | `TrendAnalysis` | `sma_alignment`, `slope_direction`, `slope_quality`, `golden_cross`, `dist_sma20/50_pct`, `conviction`, `verdict` |
+| `momentum` | `MomentumAnalysis` | `macd_bias`, `macd_hist`, `stoch_condition`, `stoch_k`, `momentum_direction`, `roc_20d`, `chg_5d`, `conviction`, `verdict` |
+| `volatility` | `VolatilityAnalysis` | `volatility_regime`, `atr_pct`, `hist_vol_20d`, `bb_position`, `bb_pct_b`, `bb_squeeze`, `volume_flow`, `conviction`, `verdict` |
 
 ### `techa.agents.ta` — Technical Analysis Agent
 

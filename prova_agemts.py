@@ -27,18 +27,23 @@ import rich
 # rich.print(result)
 
 
-from techa.agents.patterns import create_pattern_agent
-graph = create_pattern_agent(
-      ['TEN.MI'],
-      analysis_date=None,
-      data_source="live",   # default parquet, same as create_manager
-      benchmark="FTSEMIB.MI",
-      fx=None,
-      signal_filter="all",
-      lookback_days=365,
-      lookback_bars=40,
-      checkpointer=None,
-  )
-result = graph.invoke(graph._initial_state)
-rich.print(result["final_output"])
+# from techa.agents.patterns import create_pattern_agent
+# graph = create_pattern_agent(
+#       ['TEN.MI'],
+#       analysis_date=None,
+#       data_source="live",   # default parquet, same as create_manager
+#       benchmark="FTSEMIB.MI",
+#       fx=None,
+#       signal_filter="all",
+#       lookback_days=365,
+#       lookback_bars=40,
+#       checkpointer=None,
+#   )
+# result = graph.invoke(graph._initial_state)
+# rich.print(result["final_output"])
 # rich.print(result)
+
+from techa.agents.indicators import create_indicator_agent
+g = create_indicator_agent("PST.MI")
+r = g.invoke(g._initial_state)
+rich.print(r["final_output"])
