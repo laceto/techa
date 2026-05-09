@@ -27,17 +27,20 @@ class OrchestratorState(TypedDict, total=False):
     data_source:   Annotated[str,           _last]  # "parquet" (default) | "live"
     analysis_date: Annotated[Optional[str], _last]  # ISO date; None → latest bar (parquet mode only)
     lookback_days: Annotated[int,           _last]  # calendar days of history for live mode (default 365)
+    benchmark:     Annotated[str,           _last]  # benchmark ticker for live ta data (default "FTSEMIB.MI")
+    fx:            Annotated[Optional[str], _last]  # FX ticker for currency conversion; None = same currency
 
     # ── Injected by Send dispatcher ────────────────────────────────────────
-    agent_id: Annotated[Optional[str], _last]       # "indicators" | "patterns"
+    agent_id: Annotated[Optional[str], _last]       # "indicators" | "patterns" | "ta"
 
     # ── Set by prepare_node ────────────────────────────────────────────────
     raw_df:        Annotated[Optional[list], _last]  # df.reset_index().to_dict(orient="records")
     resolved_date: Annotated[str,            _last]  # last bar ISO date
+    ta_df:         Annotated[Optional[list], _last]  # ta enriched df serialised as df.to_dict(orient="records")
 
     # ── Accumulated by runner_node (one entry per dispatched agent) ────────
     results: Annotated[list[WorkerResult], add]
     # Each WorkerResult: {"agent_id": str, "data": dict, "error": str | None}
 
     # ── Set by synthesise_node ─────────────────────────────────────────────
-    final_output: Annotated[str, _last]  # combined indicators + patterns plain-text report
+    final_output: Annotated[str, _last]  # combined indicators + patterns + ta plain-text report

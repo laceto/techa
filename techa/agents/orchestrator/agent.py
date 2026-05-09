@@ -4,11 +4,13 @@ agents/orchestrator/agent.py — create_orchestrator() graph factory.
 Builds the LangGraph StateGraph:
   START → prepare_node → (_dispatcher → Send) → runner_node → synthesise_node → END
 
-prepare_node loads raw OHLCV once for the given symbol and serialises it into
-state["raw_df"]. The dispatcher fans out to runner_node twice — once with
-agent_id="indicators" and once with agent_id="patterns" — so both domain agents
-run in parallel against the same already-loaded data. synthesise_node collects
-both WorkerResult entries and formats a combined plain-text report.
+prepare_node loads raw OHLCV once for the given symbol (serialised into
+state["raw_df"]) and also loads the ta-enriched DataFrame (serialised into
+state["ta_df"]). The dispatcher fans out to runner_node three times — once each
+for agent_id="indicators", agent_id="patterns", and agent_id="ta" — so all three
+domain agents run in parallel against the already-loaded data. synthesise_node
+collects all three WorkerResult entries and calls an LLM to format a combined
+plain-text report.
 
 Adding a new runner requires only adding an entry to RUNNER_NAMES — no edge
 wiring changes are needed.
@@ -17,13 +19,12 @@ wiring changes are needed.
 from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
-from langgraph.graph.graph import CompiledGraph
 from langgraph.types import Send
 
 from techa.agents.orchestrator.graph_state import OrchestratorState
 from techa.agents.orchestrator.graph_nodes import prepare_node, runner_node, synthesise_node
 
-RUNNER_NAMES: list[str] = ["indicators", "patterns"]
+RUNNER_NAMES: list[str] = ["indicators", "patterns", "ta"]
 
 
 def _dispatcher(state: OrchestratorState) -> list[Send]:
@@ -36,28 +37,36 @@ def create_orchestrator(
     data_source: str = "live",
     analysis_date: str | None = None,
     lookback_days: int = 365,
+    benchmark: str = "FTSEMIB.MI",
+    fx: str | None = None,
     checkpointer=None,
-) -> CompiledGraph:
+):
     """
     Build and compile the Orchestrator LangGraph for a single ticker.
 
-    Loads raw OHLCV once and fans out in parallel to the indicators agent
-    (trend / momentum / volatility) and the patterns agent (candlestick scan).
-    Results are combined into a single plain-text report by synthesise_node
-    without an additional LLM call.
+    Loads raw OHLCV (for indicators and patterns) and the ta-enriched DataFrame
+    (for breakout + MA crossover analysis) once in prepare_node, then fans out in
+    parallel to three runners: indicators (trend / momentum / volatility), patterns
+    (candlestick scan), and ta (breakout + MA crossover). Results are compiled into
+    a single structured markdown brief by synthesise_node via an LLM call.
 
     Args:
         symbol:        Ticker to analyse (required, e.g. "PST.MI").
         data_source:   "live" (default, downloads via yfinance) or "parquet"
-                       (reads ropen/rhigh/rlow/rclose from analysis_results.parquet).
+                       (reads enriched data from analysis_results.parquet).
         analysis_date: ISO date string ceiling; None → latest available bar.
                        Only applied in parquet mode to anchor the data window.
         lookback_days: Calendar days of OHLCV history to fetch (live mode only,
                        default 365).
+        benchmark:     Benchmark ticker used when computing relative prices for
+                       the ta runner in live mode (default "FTSEMIB.MI").
+        fx:            Optional FX ticker for currency conversion when the stock
+                       and benchmark trade in different currencies (e.g. "EURUSD=X").
+                       Pass None (default) when they share the same currency.
         checkpointer:  Optional LangGraph checkpointer for persistence / resumption.
 
     Returns:
-        CompiledGraph ready for .invoke() / .stream(). The graph exposes
+        Compiled graph ready for .invoke() / .stream(). The graph exposes
         ._initial_state so callers can do: graph.invoke(graph._initial_state).
 
     Example:
@@ -71,6 +80,11 @@ def create_orchestrator(
         # Parquet mode
         graph = create_orchestrator("A2A.MI", data_source="parquet",
                                     analysis_date="2024-06-30")
+        result = graph.invoke(graph._initial_state)
+        print(result["final_output"])
+
+        # Live mode with FX conversion
+        graph = create_orchestrator("TCEHY", benchmark="SPY", fx="EURUSD=X")
         result = graph.invoke(graph._initial_state)
         print(result["final_output"])
     """
@@ -90,6 +104,8 @@ def create_orchestrator(
         "data_source":   data_source,
         "analysis_date": analysis_date,
         "lookback_days": lookback_days,
+        "benchmark":     benchmark,
+        "fx":            fx,
         "results":       [],
     }
 

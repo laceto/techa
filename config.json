@@ -2,22 +2,22 @@
   "regimes": {
     "breakout": {
       "bo_window": 150,
-      "relative": true
+      "relative": false
     },
     "turtle": {
       "slow_window": 50,
       "fast_window": 20,
-      "relative": true
+      "relative": false
     },
     "ma_crossover": {
       "short_window": 50,
       "medium_window": 100,
       "long_window": 150,
       "ma_type": ["sma", "ema"],
-      "relative": true
+      "relative": false
     },
     "floor_ceiling": {
-      "relative": true,
+      "relative": false,
       "vlty_n": 63,
       "dist_pct": 0.05,
       "retrace_pct": 0.05,
@@ -68,7 +68,7 @@
   },
   "benchmark": "FTSEMIB.MI",
   "floor_ceiling": {
-    "relative": true,
+    "relative": false,
     "vlty_n": 63,
     "dist_pct": 0.05,
     "retrace_pct": 0.05,

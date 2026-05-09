@@ -19,20 +19,17 @@ import json
 import logging
 import time
 
-from techa.agents._common import RESULTS_PATH
+from techa.agents._common import RESULTS_PATH, get_result_by_id
+from techa.agents._llm import SYNTHESIS_MODEL
 from techa.agents.indicators.graph_state import IndicatorAnalysisState
 from techa.agents.indicators._tools.prepare_tools import (
     load_ohlcv_from_parquet,
     download_ohlcv_live,
 )
-from techa.agents.indicators._tools.ask_trend_analyst import ask_trend_analyst
-from techa.agents.indicators._tools.ask_momentum_analyst import ask_momentum_analyst
-from techa.agents.indicators._tools.ask_volatility_analyst import ask_volatility_analyst
+from techa.agents.indicators._subagents import WORKER_REGISTRY
 from techa.indicators import build_snapshot
 
 log = logging.getLogger(__name__)
-
-_DEFAULT_MODEL = "gpt-4o"
 
 # ---------------------------------------------------------------------------
 # Stage 3 — Report compilation prompt
@@ -192,14 +189,10 @@ def worker_node(state: IndicatorAnalysisState) -> dict:
     symbol   = payload["symbol"]
 
     try:
-        if agent_id == "trend":
-            result = ask_trend_analyst(payload, ticker=symbol)
-        elif agent_id == "momentum":
-            result = ask_momentum_analyst(payload, ticker=symbol)
-        elif agent_id == "volatility":
-            result = ask_volatility_analyst(payload, ticker=symbol)
-        else:
+        worker_func = WORKER_REGISTRY.get(agent_id)
+        if worker_func is None:
             raise ValueError(f"Unknown agent_id: {agent_id!r}")
+        result = worker_func(payload, ticker=symbol)
 
         log.info("[worker] %s analysis complete for %s", agent_id, symbol)
         return {"results": [{"agent_id": agent_id, "data": result.model_dump(), "error": None}]}
@@ -239,7 +232,7 @@ def _call_synthesis_llm(
         ("system", _REPORT_SYSTEM),
         ("human",  _REPORT_HUMAN),
     ])
-    llm = ChatOpenAI(model=_DEFAULT_MODEL, temperature=0)
+    llm = ChatOpenAI(model=SYNTHESIS_MODEL, temperature=0)
 
     response = (prompt | llm).invoke({
         "ticker":              ticker,
@@ -257,11 +250,10 @@ def synthesise_node(state: IndicatorAnalysisState) -> dict:
     Never raises — missing or errored worker results are passed as "unavailable"
     to the LLM so it can still produce a partial report.
     """
-    ticker        = state.get("symbol", "unknown")
-    results_by_id = {r["agent_id"]: r for r in state.get("results", [])}
+    ticker = state.get("symbol", "unknown")
 
     def _fmt(agent_id: str) -> str:
-        r = results_by_id.get(agent_id)
+        r = get_result_by_id(state.get("results", []), agent_id)
         if not r:
             return "unavailable"
         if r.get("error"):

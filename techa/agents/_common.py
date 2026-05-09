@@ -6,25 +6,28 @@ Imported by:
   techa.agents.patterns._tools.prepare_tools
   techa.agents.ta.graph_state
   techa.agents.patterns.graph_state
+
+WorkerResult is defined in techa.agents.schema and re-exported here for
+backward compatibility.  New code should import from techa.agents.schema
+directly; _common imports it so existing callers do not need to change.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
-from typing_extensions import TypedDict
 
-
-class WorkerResult(TypedDict):
-    """Standardized result envelope written by every worker_node."""
-    agent_id: str            # identifies which worker produced this result
-    data:     dict           # structured output, serialised from the Pydantic model
-    error:    Optional[str]  # populated when the worker caught an exception; None otherwise
+# Re-export from the canonical schema module.
+from techa.agents.schema import WorkerResult  # noqa: F401
 
 RESULTS_PATH: Path = Path("data/results/it/analysis_results.parquet")
 HISTORY_BARS: int  = 300   # max rows per ticker kept from parquet; enough for ADX(14)/MA(150)/RSI(14)
+
+
+def get_result_by_id(results: list[WorkerResult], agent_id: str) -> "WorkerResult | None":
+    """Return the first WorkerResult for agent_id, or None if not found."""
+    return next((r for r in results if r["agent_id"] == agent_id), None)
 
 
 def _read_parquet_dated(path: Path, analysis_date: str | None) -> pd.DataFrame:

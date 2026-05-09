@@ -19,9 +19,9 @@ import time
 
 import pandas as pd
 
-from techa.agents._common import RESULTS_PATH
+from techa.agents._common import RESULTS_PATH, get_result_by_id
 from techa.agents.patterns.graph_state import PatternScanState
-from techa.agents.patterns._tools.ask_pattern_trader import ask_pattern_trader
+from techa.agents.patterns._subagents import WORKER_REGISTRY
 from techa.agents.patterns._tools.prepare_tools import (
     load_ohlcv_from_parquet,
     download_ohlcv_live,
@@ -150,11 +150,11 @@ def worker_node(state: PatternScanState) -> dict:
     tickers  = payload.get("tickers", [])
 
     try:
-        if agent_id == "pattern":
-            result = ask_pattern_trader(payload, tickers=tickers)
-            log.info("[worker] %s analysis complete (%d tickers)", agent_id, len(tickers))
-        else:
+        worker_func = WORKER_REGISTRY.get(agent_id)
+        if worker_func is None:
             raise ValueError(f"Unknown agent_id: {agent_id!r}")
+        result = worker_func(payload)
+        log.info("[worker] %s analysis complete (%d tickers)", agent_id, len(tickers))
 
         return {"results": [{"agent_id": agent_id, "data": result.model_dump(), "error": None}]}
 
@@ -177,8 +177,7 @@ def synthesise_node(state: PatternScanState) -> dict:
     tickers   = state.get("tickers", [])
     scan_date = state.get("scan_date", "unknown")
 
-    results_by_id = {r["agent_id"]: r for r in state.get("results", [])}
-    pattern_r     = results_by_id.get("pattern")
+    pattern_r = get_result_by_id(state.get("results", []), "pattern")
 
     sep = "=" * 60
 

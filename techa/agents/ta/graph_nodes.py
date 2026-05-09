@@ -20,15 +20,13 @@ import json
 import logging
 import time
 
-from techa.agents._common import RESULTS_PATH
+from techa.agents._common import RESULTS_PATH, get_result_by_id
+from techa.agents._llm import SYNTHESIS_MODEL
 from techa.agents.ta.graph_state import TechnicalAnalysisState
 from techa.agents.ta._tools.prepare_tools import load_analysis_data, load_live_data
-from techa.agents.ta._tools.ask_bo_trader import ask_bo_trader
-from techa.agents.ta._tools.ask_ma_trader import ask_ma_trader
+from techa.agents.ta._subagents import WORKER_REGISTRY
 
 log = logging.getLogger(__name__)
-
-_DEFAULT_MODEL = "gpt-4o"
 
 # ---------------------------------------------------------------------------
 # Stage 3 — Report compilation prompt
@@ -139,10 +137,6 @@ def prepare_node(state: TechnicalAnalysisState) -> dict:
         resolved_date, df = load_analysis_data(RESULTS_PATH, symbol, analysis_date)
 
     log.info("[prepare] symbol=%s resolved_date=%s rows=%d", symbol, resolved_date, len(df))
-    # log.info("[prepare] df tail:\n%s", df[["date", "open", "high", "low", "close"]].tail().to_string(index=False))
-    # log.info("[prepare] df tail:\n%s", df.tail().to_string(index=False))
-    print(df.tail())
-
     log.info("[prepare] raw_df stored, %.2fs", time.perf_counter() - t0)
 
     payload = {
@@ -182,18 +176,11 @@ def worker_node(state: TechnicalAnalysisState) -> dict:
     try:
         import pandas as pd
         df = pd.DataFrame(payload["raw_df"])
-        if agent_id == "breakout":
-            from techa.breakout.bo_snapshot import build_snapshot as bo_build_snapshot
-            snapshot = bo_build_snapshot(df)
-            result   = ask_bo_trader(snapshot, ticker=symbol)
-            log.info("[worker] %s analysis complete for %s", agent_id, symbol)
-        elif agent_id == "ma":
-            from techa.ma.ma_snapshot import build_snapshot as ma_build_snapshot
-            snapshot = ma_build_snapshot(df)
-            result   = ask_ma_trader(snapshot, ticker=symbol)
-            log.info("[worker] %s analysis complete for %s", agent_id, symbol)
-        else:
+        worker_func = WORKER_REGISTRY.get(agent_id)
+        if worker_func is None:
             raise ValueError(f"Unknown agent_id: {agent_id!r}")
+        result = worker_func(df, symbol)
+        log.info("[worker] %s analysis complete for %s", agent_id, symbol)
 
         return {"results": [{"agent_id": agent_id, "data": result.model_dump(), "error": None}]}
 
@@ -229,7 +216,7 @@ def _call_synthesis_llm(ticker: str, breakout_analysis: str, ma_analysis: str) -
         ("system", _REPORT_SYSTEM),
         ("human",  _REPORT_HUMAN),
     ])
-    llm = ChatOpenAI(model=_DEFAULT_MODEL, temperature=0)
+    llm = ChatOpenAI(model=SYNTHESIS_MODEL, temperature=0)
 
     response = (prompt | llm).invoke({
         "ticker":             ticker,
@@ -246,11 +233,10 @@ def synthesise_node(state: TechnicalAnalysisState) -> dict:
     Never raises — missing or errored worker results are passed as "unavailable"
     to the LLM so it can still produce a partial report.
     """
-    ticker     = state.get("symbol", "unknown")
-    results_by_id = {r["agent_id"]: r for r in state.get("results", [])}
+    ticker = state.get("symbol", "unknown")
 
     def _fmt(agent_id: str) -> str:
-        r = results_by_id.get(agent_id)
+        r = get_result_by_id(state.get("results", []), agent_id)
         if not r:
             return "unavailable"
         if r.get("error"):

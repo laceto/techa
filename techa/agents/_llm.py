@@ -15,7 +15,8 @@ import openai
 
 load_dotenv()
 
-MODEL = "gpt-4.1-nano"
+MODEL = "gpt-4.1-nano"   # structured-output worker model (all ask_* tools)
+SYNTHESIS_MODEL = "gpt-4o"  # synthesis LLM used in _call_synthesis_llm nodes
 _client = openai.OpenAI()
 
 

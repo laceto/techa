@@ -5,15 +5,17 @@ Nodes:
   prepare_node    — loads raw OHLCV once for the symbol (parquet or live); serialises
                     the DataFrame into state["raw_df"] as a list of records so the
                     DatetimeIndex is preserved as a "date" column in each record.
+                    Also loads the ta-enriched DataFrame and serialises it into
+                    state["ta_df"] as a list of records.
   runner_node     — single shared node dispatched by Send with agent_id injected;
-                    reconstructs the DataFrame from state["raw_df"] and runs the
-                    domain-specific logic for "indicators" or "patterns"; appends
-                    one WorkerResult to state["results"].
-  synthesise_node — iterates state["results"] keyed by agent_id; formats a
-                    plain-text combined report. Never raises.
+                    reconstructs the appropriate DataFrame from state and runs the
+                    domain-specific logic for "indicators", "patterns", or "ta";
+                    appends one WorkerResult to state["results"].
+  synthesise_node — iterates state["results"] keyed by agent_id; calls an LLM to
+                    format a combined markdown brief. Never raises.
 
-Invariant: state["raw_df"] is the sole data channel from prepare_node to runner_node —
-           no runner reads from disk or network.
+Invariant: state["raw_df"] and state["ta_df"] are the sole data channels from
+           prepare_node to runner_node — no runner reads from disk or network.
 """
 
 from __future__ import annotations
@@ -25,11 +27,10 @@ import time
 import pandas as pd
 
 from techa.agents._common import RESULTS_PATH
+from techa.agents._llm import SYNTHESIS_MODEL
 from techa.agents.orchestrator.graph_state import OrchestratorState
 
 log = logging.getLogger(__name__)
-
-_DEFAULT_MODEL = "gpt-4o"
 
 # ---------------------------------------------------------------------------
 # Stage 3 — Report compilation prompt
@@ -65,7 +66,7 @@ Two to three paragraphs covering:
 ## Signal Confluence Scorecard
 
 Summary table with columns:
-| Dimension | Trend | Momentum | Volatility | Patterns | Confluence |
+| Dimension | Trend | Momentum | Volatility | TA | Patterns | Confluence |
 
 Where Confluence is one of: ✅ Aligned · ⚠️ Mixed · 🔴 Diverging
 
@@ -92,6 +93,24 @@ Volume/flow signal, Risk/stop level.
 2. Bollinger Bands — %B position, squeeze status (bb_squeeze), band width.
 3. Volume flow — accumulation/distribution/neutral from Chaikin oscillator.
 4. Risk sizing — stop sizing implication from ATR level.
+
+---
+
+## TA Analysis (Breakout + MA Crossover)
+
+### Breakout
+1. Confluence — full_long / full_short / mixed / flat across rbo_20/50/150.
+2. Range quality — setup (sideways?), compression, touch count.
+3. Turtle signal — rtt_5020 alignment with rbo_20.
+4. Stop levels — rlo_20 (short-term long stop), rhi_20 (short-term short stop).
+5. Trigger to watch — specific signal flip that changes the call.
+
+### MA Crossover
+1. Triple confluence — rema_50100150 and rsma_50100150 agreement.
+2. Trend strength — ADX level, RSI, MA gap slope.
+3. Volume confirmation — vol_trend at and after the crossover flip.
+4. Stop level — rema_50100150_stop_loss.
+5. Trigger to watch — specific MA cross or ADX threshold to monitor.
 
 ---
 
@@ -125,6 +144,10 @@ Momentum analysis:          {momentum_analysis}
 Volatility/volume analysis: {volatility_analysis}
 
 Candlestick patterns:       {patterns_analysis}
+
+Breakout analysis:          {breakout_analysis}
+
+MA crossover analysis:      {ma_analysis}
 """
 
 
@@ -135,20 +158,25 @@ Candlestick patterns:       {patterns_analysis}
 
 def prepare_node(state: OrchestratorState) -> dict:
     """
-    Load raw OHLCV for one symbol and serialise it into state["raw_df"].
+    Load raw OHLCV and the ta-enriched DataFrame for one symbol.
 
-    Mode A (parquet): reuses load_ohlcv_from_parquet from the indicators prepare_tools.
-    Mode B (live):    downloads via YFinanceDataHandler (same pipeline as all agents).
+    Mode A (parquet): reuses load_ohlcv_from_parquet from the indicators prepare_tools
+                      for raw OHLCV; uses load_analysis_data from the ta prepare_tools
+                      for the enriched ta DataFrame.
+    Mode B (live):    downloads via YFinanceDataHandler (same pipeline as all agents)
+                      for raw OHLCV; uses load_live_data from the ta prepare_tools for
+                      the enriched ta DataFrame (relative prices, signals, stop-losses).
 
-    The DataFrame is stored as df.reset_index().to_dict(orient="records") so the
-    DatetimeIndex is preserved as a "date" column that runner_node can restore.
+    The raw OHLCV DataFrame is stored as df.reset_index().to_dict(orient="records") so
+    the DatetimeIndex is preserved as a "date" column that runner_node can restore.
+    The ta DataFrame is stored as df.to_dict(orient="records") (date is a plain column).
 
     Args:
         state: Must contain "symbol". Optional: "data_source", "analysis_date",
-               "lookback_days".
+               "lookback_days", "benchmark", "fx".
 
     Returns:
-        Dict updating "raw_df" and "resolved_date".
+        Dict updating "raw_df", "ta_df", and "resolved_date".
 
     Raises:
         ValueError: If the symbol cannot be found or returns no data.
@@ -158,6 +186,8 @@ def prepare_node(state: OrchestratorState) -> dict:
     data_source   = state.get("data_source", "parquet")
     analysis_date = state.get("analysis_date")
     lookback_days = state.get("lookback_days", 365)
+    benchmark     = state.get("benchmark", "FTSEMIB.MI")
+    fx            = state.get("fx")
 
     if data_source == "live":
         from datetime import date, timedelta
@@ -195,8 +225,20 @@ def prepare_node(state: OrchestratorState) -> dict:
 
     raw_df = df.reset_index().to_dict(orient="records")
 
+    # ── Load ta-enriched DataFrame ──────────────────────────────────────────
+    if data_source == "live":
+        from techa.agents.ta._tools.prepare_tools import load_live_data
+        _, ta_df_raw = load_live_data(symbol, benchmark=benchmark, fx=fx)
+    else:
+        from techa.agents.ta._tools.prepare_tools import load_analysis_data
+        _, ta_df_raw = load_analysis_data(RESULTS_PATH, symbol, analysis_date)
+
+    ta_df = ta_df_raw.to_dict(orient="records")
+    log.info("[prepare] ta_df serialised: %d rows", len(ta_df))
+
     return {
         "raw_df":        raw_df,
+        "ta_df":         ta_df,
         "resolved_date": resolved_date,
     }
 
@@ -210,13 +252,15 @@ def runner_node(state: OrchestratorState) -> dict:
     """
     Run domain-specific logic for a single agent_id injected by the Send dispatcher.
 
-    Reconstructs the DataFrame from state["raw_df"] at the top of each branch.
+    Reconstructs the appropriate DataFrame from state at the top of each branch:
+    "indicators" and "patterns" use state["raw_df"]; "ta" uses state["ta_df"].
     Never raises — exceptions are caught and stored as a WorkerResult with error set,
-    so the other dispatched runner can continue and synthesise_node always runs.
+    so the other dispatched runners can continue and synthesise_node always runs.
 
     Args:
-        state: Must contain "agent_id" (injected by Send) and "raw_df"
-               (set by prepare_node).
+        state: Must contain "agent_id" (injected by Send), "raw_df" (set by
+               prepare_node for indicators/patterns), and "ta_df" (set by
+               prepare_node for the ta runner).
 
     Returns:
         {"results": [WorkerResult]} — appended to state via the add reducer.
@@ -307,6 +351,23 @@ def runner_node(state: OrchestratorState) -> dict:
             log.info("[runner] patterns complete for %s", symbol)
             return {"results": [{"agent_id": "patterns", "data": result.model_dump(), "error": None}]}
 
+        elif agent_id == "ta":
+            from techa.agents.ta._subagents import WORKER_REGISTRY as TA_REGISTRY
+
+            df = pd.DataFrame(state["ta_df"])
+            if "date" in df.columns:
+                df["date"] = pd.to_datetime(df["date"])
+
+            bo_result = TA_REGISTRY["breakout"](df, symbol)
+            ma_result = TA_REGISTRY["ma"](df, symbol)
+
+            log.info("[runner] ta complete for %s", symbol)
+            data = {
+                "breakout": bo_result.model_dump(),
+                "ma":       ma_result.model_dump(),
+            }
+            return {"results": [{"agent_id": "ta", "data": data, "error": None}]}
+
         else:
             raise ValueError(f"Unknown agent_id: {agent_id!r}")
 
@@ -326,9 +387,11 @@ def _call_synthesis_llm(
     momentum_analysis: str,
     volatility_analysis: str,
     patterns_analysis: str,
+    breakout_analysis: str,
+    ma_analysis: str,
 ) -> str:
     """
-    Call the LLM once to compile all four assessments into a final technical brief.
+    Call the LLM once to compile all six assessments into a final technical brief.
 
     Isolated into its own function so tests can mock the LLM call without
     wrestling with LangChain's LCEL pipe internals.
@@ -339,6 +402,8 @@ def _call_synthesis_llm(
         momentum_analysis:   JSON string of the momentum sub-result (or "unavailable").
         volatility_analysis: JSON string of the volatility sub-result (or "unavailable").
         patterns_analysis:   JSON string of the patterns runner result (or "unavailable").
+        breakout_analysis:   JSON string of the breakout sub-result (or "unavailable").
+        ma_analysis:         JSON string of the MA crossover sub-result (or "unavailable").
 
     Returns:
         Markdown string containing the compiled report.
@@ -350,7 +415,7 @@ def _call_synthesis_llm(
         ("system", _REPORT_SYSTEM),
         ("human",  _REPORT_HUMAN),
     ])
-    llm = ChatOpenAI(model=_DEFAULT_MODEL, temperature=0)
+    llm = ChatOpenAI(model=SYNTHESIS_MODEL, temperature=0)
 
     response = (prompt | llm).invoke({
         "ticker":              ticker,
@@ -358,13 +423,15 @@ def _call_synthesis_llm(
         "momentum_analysis":   momentum_analysis,
         "volatility_analysis": volatility_analysis,
         "patterns_analysis":   patterns_analysis,
+        "breakout_analysis":   breakout_analysis,
+        "ma_analysis":         ma_analysis,
     })
     return response.content if hasattr(response, "content") else str(response)
 
 
 def synthesise_node(state: OrchestratorState) -> dict:
     """
-    Compile all four assessments into a final technical brief via an LLM call.
+    Compile all assessments into a final technical brief via an LLM call.
 
     Never raises — missing or errored runner results are passed as "unavailable"
     to the LLM so it can still produce a partial report.
@@ -398,10 +465,21 @@ def synthesise_node(state: OrchestratorState) -> dict:
             return f"unavailable — {r['error']}"
         return json.dumps(r["data"], indent=2)
 
+    def _fmt_ta(r) -> tuple:
+        """Return (breakout_str, ma_str) or two "unavailable" strings."""
+        if not r:
+            return "unavailable", "unavailable"
+        if r.get("error"):
+            msg = f"unavailable — {r['error']}"
+            return msg, msg
+        data = r["data"]
+        return json.dumps(data.get("breakout", {}), indent=2), json.dumps(data.get("ma", {}), indent=2)
+
     trend_str, momentum_str, volatility_str = _fmt_indicators(
         results_by_id.get("indicators")
     )
     patterns_str = _fmt_patterns(results_by_id.get("patterns"))
+    breakout_str, ma_str = _fmt_ta(results_by_id.get("ta"))
 
     log.info("[synthesise] generating report for %s", ticker)
     try:
@@ -411,6 +489,8 @@ def synthesise_node(state: OrchestratorState) -> dict:
             momentum_str,
             volatility_str,
             patterns_str,
+            breakout_str,
+            ma_str,
         )
     except Exception as exc:
         log.error("[synthesise] LLM call failed: %s", exc, exc_info=True)

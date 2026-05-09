@@ -1,12 +1,13 @@
 # techa/agents — Full Source Code (pre-refactor snapshot)
 
-> **Stale.** This file was generated before the Dynamic Scalability Patterns refactor.
-> For the current architecture see `DYNAMIC_PATTERNS_REVIEW.md` and read the source files directly.
+> **Stale.** This file was generated before the Dynamic Scalability Patterns refactor and before the
+> `orchestrator` subpackage was added. For the current architecture read the source files directly.
 
 ## Directory structure
 
 ```
 techa/agents/
+├── schema.py
 ├── _common.py
 ├── _llm.py
 ├── ta/
@@ -26,16 +27,20 @@ techa/agents/
 │   └── _tools/
 │       ├── prepare_tools.py
 │       └── ask_pattern_trader.py
-└── indicators/
-    ├── agent.py               create_indicator_agent() — live (default) or parquet mode
-    ├── graph_state.py         IndicatorAnalysisState
-    ├── graph_nodes.py         prepare_node, worker_node, synthesise_node
-    ├── _subagents.py          WORKER_NAMES = ["trend", "momentum", "volatility"]
-    └── _tools/
-        ├── prepare_tools.py
-        ├── ask_trend_analyst.py
-        ├── ask_momentum_analyst.py
-        └── ask_volatility_analyst.py
+├── indicators/
+│   ├── agent.py               create_indicator_agent() — live (default) or parquet mode
+│   ├── graph_state.py         IndicatorAnalysisState
+│   ├── graph_nodes.py         prepare_node, worker_node, synthesise_node
+│   ├── _subagents.py          WORKER_NAMES = ["trend", "momentum", "volatility"]
+│   └── _tools/
+│       ├── prepare_tools.py
+│       ├── ask_trend_analyst.py
+│       ├── ask_momentum_analyst.py
+│       └── ask_volatility_analyst.py
+└── orchestrator/              single-ticker orchestrator: shared prepare + parallel indicators+patterns
+    ├── agent.py               create_orchestrator() factory; _dispatcher() Send fan-out
+    ├── graph_state.py         OrchestratorState; raw_df channel + results accumulator
+    └── graph_nodes.py         prepare_node, runner_node, synthesise_node (_call_synthesis_llm)
 ```
 
 ---

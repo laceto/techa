@@ -11,8 +11,7 @@ Technical analysis primitives for trader assistants.
 | `techa.ma` | Manual Wilder | Relative-price parquet | Moving-average crossover analytics |
 | `techa.breakout` | Manual | Relative-price parquet | Range breakout analytics |
 | `techa.agents` | LangGraph + OpenAI | OHLCV / parquet | AI-powered multi-agent technical analysis and pattern reports |
-
-> **Note:** `techa.ma` and `techa.breakout` currently use the old `ta.` import alias internally. Raw OHLCV is not present in their parquet input.
+| `techa.agents.orchestrator` | LangGraph + OpenAI + LangChain | OHLCV / parquet | Single-ticker orchestrator: loads OHLCV once and fans out in parallel to `indicators`, `patterns`, and `ta` agents; final synthesis via `gpt-4o` |
 
 ---
 
@@ -238,6 +237,46 @@ print(result["final_output"])
 | `top_actionable` | Tickers with ≥ 2 same-direction patterns (medium/high conviction) |
 | `watchlist` | Tickers with single-bar or mixed signals |
 | `summary` | One-sentence net market message |
+
+### `techa.agents.orchestrator` — Orchestrator Agent
+
+Single-ticker orchestrator: loads OHLCV once and fans out **in parallel** to three agents — `indicators` (trend / momentum / volatility), `patterns` (candlestick scan), and `ta` (MA crossovers + breakout). A final `gpt-4o` call synthesises all assessments into a structured markdown brief.
+
+```python
+from techa.agents.orchestrator import create_orchestrator
+
+# Live mode (default) — downloads OHLCV via YFinanceDataHandler
+graph = create_orchestrator("PST.MI")
+result = graph.invoke(graph._initial_state)
+print(result["final_output"])
+
+# Parquet mode — reads ropen/rhigh/rlow/rclose from analysis_results.parquet
+graph = create_orchestrator("A2A.MI", data_source="parquet", analysis_date="2024-06-30")
+result = graph.invoke(graph._initial_state)
+print(result["final_output"])
+```
+
+**Arguments:**
+
+| Argument | Default | Description |
+|---|---|---|
+| `symbol` | required | Ticker to analyse (e.g. `"PST.MI"`) |
+| `data_source` | `"live"` | `"live"` (yfinance) or `"parquet"` (relative-price OHLCV) |
+| `analysis_date` | `None` | ISO date ceiling; `None` → latest bar (parquet mode only) |
+| `lookback_days` | `365` | Calendar days of OHLCV history to fetch (live mode only) |
+| `benchmark` | `"FTSEMIB.MI"` | Benchmark ticker for relative-price computation (ta runner) |
+| `fx` | `None` | Optional FX ticker for currency conversion (e.g. `"EURUSD=X"`) |
+| `checkpointer` | `None` | LangGraph checkpointer for persistence / resumption |
+
+**`final_output` report sections:**
+
+1. **Position Recommendation** — LONG / SHORT / NEUTRAL with conviction level and holding horizon
+2. **Signal Confluence Scorecard** — 5-dimension table across Trend / Momentum / Volatility / Patterns / TA
+3. **Indicators Deep-Dive** — Trend (MA alignment, slope), Momentum (MACD, stochastic, ROC), Volatility & Volume Flow (ATR, BB, Chaikin)
+4. **Candlestick Patterns** — last-bar hits, recent activity, confluence with indicators
+5. **TA Deep-Dive** — MA crossovers (EMA/SMA triple confluence), breakout analysis (range quality, vol compression)
+6. **Entry & Exit Plan** — specific entry trigger, stop-loss, first target
+7. **Bottom Line** — net conviction and the single signal to monitor
 
 ---
 
