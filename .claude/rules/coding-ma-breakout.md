@@ -10,14 +10,14 @@ python -m pytest techa/breakout/tests/
 python -m pytest techa/ma/tests/test_trend_quality.py::test_name  # single test
 ```
 
-## Import path — critical
-These subpackages **still use the old `ta.` package name**. Match the existing imports in the file you are editing:
+## Import path
+Use `techa.` everywhere — the `ta.` → `techa.` rename is complete:
 ```python
-from ta.utils import ols_slope_r2          # correct for ma/ and breakout/
-from ta.ma.trend_quality import assess_ma_trend
-from ta.breakout.range_quality import assess_range
+from techa.utils import ols_slope_r2
+from techa.utils import ols_slope
+from techa.ma.trend_quality import assess_ma_trend
+from techa.breakout.range_quality import assess_range
 ```
-Do **not** change existing imports to `techa.` — that rename is in progress and must be done as a separate task.
 
 ## Relative prices
 All price data is ticker price / FTSEMIB.MI benchmark. Column names are prefixed `r`: `rclose`, `rhigh`, `rema_short_50`, `rbo_N_age`, etc. Raw OHLC is not present in the parquet. Slope and volatility estimates are directly comparable across tickers because the normalisation removes price-level effects.
