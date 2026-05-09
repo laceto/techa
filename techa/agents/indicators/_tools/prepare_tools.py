@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
-import yfinance as yf
+from algoshort.yfinance_handler import YFinanceDataHandler
 
 from techa.agents._common import RESULTS_PATH, HISTORY_BARS, _read_parquet_dated
 
@@ -91,7 +91,7 @@ def download_ohlcv_live(
     lookback_days: int = 365,
 ) -> tuple[pd.DataFrame, str]:
     """
-    Download raw OHLCV for one symbol via yfinance.
+    Download raw OHLCV for one symbol via YFinanceDataHandler.
 
     Args:
         symbol:        Ticker symbol (e.g. "PST.MI").
@@ -101,30 +101,35 @@ def download_ohlcv_live(
         (ohlcv_df, resolved_date) where resolved_date is the last bar's ISO date.
 
     Raises:
-        ValueError: If yfinance returns no data for the symbol.
+        ValueError: If YFinanceDataHandler returns no data for the symbol.
     """
     end_dt   = datetime.today()
     start_dt = end_dt - timedelta(days=lookback_days)
     start    = start_dt.strftime("%Y-%m-%d")
-    end      = (end_dt + timedelta(days=1)).strftime("%Y-%m-%d")
 
-    log.info("[prepare] downloading OHLCV: %s  %s → %s", symbol, start, end)
+    log.info("[prepare] downloading OHLCV via YFinanceDataHandler: %s  %s → %s",
+             symbol, start, end_dt.strftime("%Y-%m-%d"))
 
-    df = yf.download(
-        symbol,
+    handler = YFinanceDataHandler(cache_dir="data/ohlc/it", enable_logging=False, chunk_size=20)
+    handler.download_data(
+        symbols=[symbol],
         start=start,
-        end=end,
-        multi_level_index=False,
-        progress=False,
+        end=end_dt.date(),
+        interval="1d",
+        use_cache=False,
+        threads=True,
     )
+
+    df = handler.get_ohlc_data(symbol)
 
     if df.empty:
         raise ValueError(
-            f"yfinance returned no data for '{symbol}' "
-            f"in range {start} → {end}. Check the ticker symbol."
+            f"YFinanceDataHandler returned no data for '{symbol}' "
+            f"in range {start} → {end_dt.strftime('%Y-%m-%d')}. Check the ticker symbol."
         )
 
     df.columns = df.columns.str.lower()
     resolved_date = df.index[-1].strftime("%Y-%m-%d")
     log.info("[prepare] live: %s  %d bars  resolved=%s", symbol, len(df), resolved_date)
-    return df, resolved_date
+    keep = [c for c in ("open", "high", "low", "close", "volume") if c in df.columns]
+    return df[keep], resolved_date

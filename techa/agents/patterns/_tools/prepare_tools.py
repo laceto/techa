@@ -17,8 +17,9 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta
 
-import yfinance as yf
 from pathlib import Path
+
+from algoshort.yfinance_handler import YFinanceDataHandler
 
 from techa.agents._common import RESULTS_PATH, HISTORY_BARS, _read_parquet_dated
 
@@ -96,7 +97,7 @@ def download_ohlcv_live(
     lookback_days: int = 365,
 ) -> tuple[dict, str]:
     """
-    Download raw OHLCV for each ticker via yfinance.
+    Download raw OHLCV for each ticker via YFinanceDataHandler.
 
     Args:
         tickers:       Ticker symbols to download (e.g. ["A2A.MI", "ENI.MI"]).
@@ -109,21 +110,25 @@ def download_ohlcv_live(
     end_dt    = datetime.today()
     start_dt  = end_dt - timedelta(days=lookback_days)
     start     = start_dt.strftime("%Y-%m-%d")
-    end       = (end_dt + timedelta(days=1)).strftime("%Y-%m-%d")  # end is exclusive in yfinance
     scan_date = end_dt.strftime("%Y-%m-%d")
 
-    log.info("[prepare] downloading OHLCV for %d tickers (%s → %s)", len(tickers), start, end)
+    log.info("[prepare] downloading OHLCV for %d tickers via YFinanceDataHandler (%s → %s)",
+             len(tickers), start, scan_date)
+
+    handler = YFinanceDataHandler(cache_dir="data/ohlc/it", enable_logging=False, chunk_size=20)
+    handler.download_data(
+        symbols=tickers,
+        start=start,
+        end=end_dt.date(),
+        interval="1d",
+        use_cache=False,
+        threads=True,
+    )
 
     ohlcv_by_ticker: dict = {}
     for ticker in tickers:
         try:
-            df = yf.download(
-                ticker,
-                start=start,
-                end=end,
-                multi_level_index=False,
-                progress=False,
-            )
+            df = handler.get_ohlc_data(ticker)
             if df.empty:
                 log.warning("[prepare] no data returned for %s — skipped", ticker)
                 continue
