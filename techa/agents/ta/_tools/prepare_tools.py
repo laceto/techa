@@ -116,6 +116,7 @@ def load_live_data(
     benchmark: str = BENCHMARK,
     fx: str | None = None,
     config_path: Path = Path("config.json"),
+    relative: bool = False,
 ) -> tuple[str, pd.DataFrame]:
     """
     Download live OHLC for a single symbol, enrich with signals and stop-losses.
@@ -126,6 +127,9 @@ def load_live_data(
         fx:          Optional FX ticker for currency conversion (e.g. "EURUSD=X").
                      Pass None when stock and benchmark share the same currency.
         config_path: Path to config.json for search-space parameters.
+        relative:    If True, signals are computed on relative prices
+                     (stock / benchmark). If False (default), absolute prices are
+                     used. Matches the "relative: false" flags in config.json.
 
     Returns:
         (today_iso, df) where df is ready for build_snapshot().
@@ -195,6 +199,7 @@ def load_live_data(
         tt_search_space=tt_search_space,
         bo_search_space=bo_search_space,
         ma_search_space=ma_search_space,
+        relative=relative,
     )
     dfs = calculate_return(dfs, signal_columns)
 

@@ -30,6 +30,7 @@ def create_manager(
     data_source: str = "parquet",   # "parquet" | "live"
     benchmark: str = "FTSEMIB.MI",
     fx: str | None = None,
+    relative: bool = False,
     checkpointer=None,
 ):
     """
@@ -44,6 +45,9 @@ def create_manager(
                        Mode B: used for calculate_relative_prices (e.g. "H4ZX.DE").
         fx:            Optional FX ticker for currency conversion (e.g. "EURUSD=X").
                        Pass None when stock and benchmark share the same currency.
+        relative:      If True, signals use relative prices (stock / benchmark).
+                       If False (default, matches config.json), absolute prices are
+                       used. Applies to live mode only; parquet data is pre-computed.
         checkpointer:  Optional LangGraph checkpointer for persistence / resumption.
 
     Returns:
@@ -66,6 +70,7 @@ def create_manager(
         "data_source":   data_source,
         "benchmark":     benchmark,
         "fx":            fx,
+        "relative":      relative,
         "results":       [],
     }
 

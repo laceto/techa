@@ -85,6 +85,7 @@ print(r['final_output'])
 - The `results` field uses `Annotated[list[WorkerResult], add]` — the `add` (list concatenation) reducer lets parallel `worker_node` invocations each append one `WorkerResult` without overwriting each other. Do **not** use `add` on any other field.
 - `payload` (native `dict`) is the **sole data channel** from `prepare_node` to `worker_node` in the `ta`, `patterns`, and `indicators` agents. Workers never read from disk or network.
 - In the `orchestrator`, the channel is `raw_df` — a serialised DataFrame (`df.reset_index().to_dict(orient="records")`) storing raw OHLCV with the DatetimeIndex preserved as a `"date"` column. `runner_node` reconstructs it via `pd.to_datetime` + `set_index("date")`.
+- `relative` (`bool`, default `True`) is a caller-input field in both `TechnicalAnalysisState` and `OrchestratorState`. It is forwarded to `load_live_data(..., relative=relative)` which passes it to `generate_signals(...)`. In parquet mode the data is already relative, so `relative` is ignored.
 
 ### Node responsibilities
 - `prepare_node` — loads OHLCV/parquet, computes scans (or stores raw OHLCV in `raw_df` for the orchestrator), stores result as native dict in `state["payload"]` (or `state["raw_df"]`).

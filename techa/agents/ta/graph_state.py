@@ -31,6 +31,7 @@ class TechnicalAnalysisState(TypedDict, total=False):
     # Mode B default: user-supplied (used for calculate_relative_prices)
     fx:            Annotated[Optional[str], _last]  # FX ticker for currency conversion (e.g. "EURUSD=X")
     # None → no FX conversion (stock and benchmark share the same currency)
+    relative:      Annotated[bool,          _last]  # True = relative prices; False = absolute (live mode only)
 
     # ── Injected by Send dispatcher ────────────────────────────────────────────
     agent_id: Annotated[Optional[str], _last]  # set per-dispatch; identifies the active worker

@@ -187,6 +187,7 @@ print(result["final_output"])
 | `data_source` | `"parquet"` | `"parquet"` or `"live"` |
 | `benchmark` | `"FTSEMIB.MI"` | Benchmark ticker (for relative-price computation in live mode) |
 | `fx` | `None` | Optional FX ticker for currency conversion (e.g. `"EURUSD=X"`) |
+| `relative` | `False` | If `True`, signals use relative prices (stock / benchmark). If `False` (default, matches config.json), absolute. Live mode only. |
 | `checkpointer` | `None` | LangGraph checkpointer for persistence / resumption |
 
 ### `techa.agents.patterns` — Candlestick Pattern Scan Agent
@@ -266,6 +267,7 @@ print(result["final_output"])
 | `lookback_days` | `365` | Calendar days of OHLCV history to fetch (live mode only) |
 | `benchmark` | `"FTSEMIB.MI"` | Benchmark ticker for relative-price computation (ta runner) |
 | `fx` | `None` | Optional FX ticker for currency conversion (e.g. `"EURUSD=X"`) |
+| `relative` | `False` | If `True`, ta runner uses relative prices (stock / benchmark). If `False` (default, matches config.json), absolute. Live mode only. |
 | `checkpointer` | `None` | LangGraph checkpointer for persistence / resumption |
 
 **`final_output` report sections:**

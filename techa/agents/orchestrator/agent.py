@@ -39,6 +39,7 @@ def create_orchestrator(
     lookback_days: int = 365,
     benchmark: str = "FTSEMIB.MI",
     fx: str | None = None,
+    relative: bool = False,
     checkpointer=None,
 ):
     """
@@ -63,6 +64,10 @@ def create_orchestrator(
         fx:            Optional FX ticker for currency conversion when the stock
                        and benchmark trade in different currencies (e.g. "EURUSD=X").
                        Pass None (default) when they share the same currency.
+        relative:      If True, the ta runner computes signals on relative prices
+                       (stock / benchmark). If False (default, matches config.json),
+                       absolute prices are used. Applies to live mode only; parquet
+                       data is already pre-computed.
         checkpointer:  Optional LangGraph checkpointer for persistence / resumption.
 
     Returns:
@@ -72,8 +77,13 @@ def create_orchestrator(
     Example:
         from techa.agents.orchestrator import create_orchestrator
 
-        # Live mode (default)
+        # Live mode (default, relative prices)
         graph = create_orchestrator("PST.MI")
+        result = graph.invoke(graph._initial_state)
+        print(result["final_output"])
+
+        # Live mode, absolute prices
+        graph = create_orchestrator("PST.MI", relative=False)
         result = graph.invoke(graph._initial_state)
         print(result["final_output"])
 
@@ -106,6 +116,7 @@ def create_orchestrator(
         "lookback_days": lookback_days,
         "benchmark":     benchmark,
         "fx":            fx,
+        "relative":      relative,
         "results":       [],
     }
 

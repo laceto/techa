@@ -188,6 +188,7 @@ def prepare_node(state: OrchestratorState) -> dict:
     lookback_days = state.get("lookback_days", 365)
     benchmark     = state.get("benchmark", "FTSEMIB.MI")
     fx            = state.get("fx")
+    relative      = state.get("relative", False)
 
     if data_source == "live":
         from datetime import date, timedelta
@@ -228,7 +229,7 @@ def prepare_node(state: OrchestratorState) -> dict:
     # ── Load ta-enriched DataFrame ──────────────────────────────────────────
     if data_source == "live":
         from techa.agents.ta._tools.prepare_tools import load_live_data
-        _, ta_df_raw = load_live_data(symbol, benchmark=benchmark, fx=fx)
+        _, ta_df_raw = load_live_data(symbol, benchmark=benchmark, fx=fx, relative=relative)
     else:
         from techa.agents.ta._tools.prepare_tools import load_analysis_data
         _, ta_df_raw = load_analysis_data(RESULTS_PATH, symbol, analysis_date)

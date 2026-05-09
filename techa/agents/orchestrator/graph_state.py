@@ -29,6 +29,7 @@ class OrchestratorState(TypedDict, total=False):
     lookback_days: Annotated[int,           _last]  # calendar days of history for live mode (default 365)
     benchmark:     Annotated[str,           _last]  # benchmark ticker for live ta data (default "FTSEMIB.MI")
     fx:            Annotated[Optional[str], _last]  # FX ticker for currency conversion; None = same currency
+    relative:      Annotated[bool,          _last]  # True = relative prices; False = absolute (live mode only)
 
     # ── Injected by Send dispatcher ────────────────────────────────────────
     agent_id: Annotated[Optional[str], _last]       # "indicators" | "patterns" | "ta"

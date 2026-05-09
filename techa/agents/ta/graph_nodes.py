@@ -130,10 +130,13 @@ def prepare_node(state: TechnicalAnalysisState) -> dict:
     analysis_date = state.get("analysis_date")
     benchmark     = state.get("benchmark", "FTSEMIB.MI")
     fx            = state.get("fx")
+    relative      = state.get("relative", False)
 
     if data_source == "live":
-        resolved_date, df = load_live_data(symbol, benchmark=benchmark, fx=fx)
+        resolved_date, df = load_live_data(symbol, benchmark=benchmark, fx=fx, relative=relative)
     else:
+        if relative is not False:
+            log.warning("[prepare] relative=%s has no effect in parquet mode — data is already relative", relative)
         resolved_date, df = load_analysis_data(RESULTS_PATH, symbol, analysis_date)
 
     log.info("[prepare] symbol=%s resolved_date=%s rows=%d", symbol, resolved_date, len(df))
