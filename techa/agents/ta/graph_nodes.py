@@ -2,10 +2,11 @@
 agents/graph_nodes.py — Node implementations for the TechnicalAnalysis graph.
 
 Nodes:
-  prepare_node        — loads data and builds breakout + MA snapshots for one symbol;
-                        stores the result as a native dict in state["payload"].
+  prepare_node        — loads raw data for one symbol and stores the raw DataFrame
+                        as a serialised dict in state["payload"]["raw_df"].
   worker_node         — single shared node; dispatched by Send with agent_id injected;
-                        calls ask_bo_trader or ask_ma_trader and appends a WorkerResult.
+                        reconstructs the DataFrame, builds its own snapshot, calls
+                        ask_bo_trader or ask_ma_trader, and appends a WorkerResult.
   _call_synthesis_llm — calls the LLM once to compile both AI reports into a final brief.
   synthesise_node     — reads state["results"], formats inputs, delegates to _call_synthesis_llm.
 
@@ -24,8 +25,6 @@ from techa.agents.ta.graph_state import TechnicalAnalysisState
 from techa.agents.ta._tools.prepare_tools import load_analysis_data, load_live_data
 from techa.agents.ta._tools.ask_bo_trader import ask_bo_trader
 from techa.agents.ta._tools.ask_ma_trader import ask_ma_trader
-from techa.breakout.bo_snapshot import build_snapshot as bo_build_snapshot
-from techa.ma.ma_snapshot import build_snapshot as ma_build_snapshot
 
 log = logging.getLogger(__name__)
 
@@ -121,10 +120,10 @@ MA crossover analysis: {ma_analysis}
 
 def prepare_node(state: TechnicalAnalysisState) -> dict:
     """
-    Load data for one symbol, build breakout and MA snapshots, store as native dict.
+    Load raw data for one symbol and store the DataFrame as a serialised dict in payload.
 
     Raises:
-        ValueError: If the symbol cannot be found or snapshots cannot be built.
+        ValueError: If the symbol cannot be found in the data.
         FileNotFoundError: If the parquet file is missing (Mode A).
     """
     t0 = time.perf_counter()
@@ -144,16 +143,12 @@ def prepare_node(state: TechnicalAnalysisState) -> dict:
     # log.info("[prepare] df tail:\n%s", df.tail().to_string(index=False))
     print(df.tail())
 
-    breakout_snapshot = bo_build_snapshot(df)
-    ma_snapshot       = ma_build_snapshot(df)
-
-    log.info("[prepare] snapshots built in %.2fs", time.perf_counter() - t0)
+    log.info("[prepare] raw_df stored, %.2fs", time.perf_counter() - t0)
 
     payload = {
-        "date":              resolved_date,
-        "symbol":            symbol,
-        "breakout_snapshot": breakout_snapshot,
-        "ma_snapshot":       ma_snapshot,
+        "date":   resolved_date,
+        "symbol": symbol,
+        "raw_df": df.to_dict(orient="records"),
     }
 
     return {
@@ -185,12 +180,16 @@ def worker_node(state: TechnicalAnalysisState) -> dict:
     symbol   = payload["symbol"]
 
     try:
+        import pandas as pd
+        df = pd.DataFrame(payload["raw_df"])
         if agent_id == "breakout":
-            snapshot = payload["breakout_snapshot"]
+            from techa.breakout.bo_snapshot import build_snapshot as bo_build_snapshot
+            snapshot = bo_build_snapshot(df)
             result   = ask_bo_trader(snapshot, ticker=symbol)
             log.info("[worker] %s analysis complete for %s", agent_id, symbol)
         elif agent_id == "ma":
-            snapshot = payload["ma_snapshot"]
+            from techa.ma.ma_snapshot import build_snapshot as ma_build_snapshot
+            snapshot = ma_build_snapshot(df)
             result   = ask_ma_trader(snapshot, ticker=symbol)
             log.info("[worker] %s analysis complete for %s", agent_id, symbol)
         else:

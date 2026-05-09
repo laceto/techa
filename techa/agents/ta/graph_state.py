@@ -40,10 +40,9 @@ class TechnicalAnalysisState(TypedDict, total=False):
     payload:       Annotated[Optional[dict], _last]
     # payload shape:
     # {
-    #   "date":               "YYYY-MM-DD",
-    #   "symbol":             str,
-    #   "breakout_snapshot":  dict,   ← ta.breakout.bo_snapshot.build_snapshot()
-    #   "ma_snapshot":        dict,   ← ta.ma.ma_snapshot.build_snapshot()
+    #   "date":    "YYYY-MM-DD",
+    #   "symbol":  str,
+    #   "raw_df":  list[dict],   ← df.to_dict(orient="records"); workers reconstruct with pd.DataFrame()
     # }
 
     # ── Accumulated by worker_node (one entry per dispatched agent) ────────────
