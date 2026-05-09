@@ -1,30 +1,26 @@
 import rich
 
-# from techa.agents.ta import create_manager
-# data_source = "live"
+from techa.agents.ta import create_manager
+data_source = "live"
 
-# symbol = 'TEN.MI'
-# benchmark = 'FTSEMIB.MI'
-# date = '2026-05-08'
-# fx = None
+symbol = 'CMB.MI'
+benchmark = 'FTSEMIB.MI'
+date = '2026-05-08'
+fx = None
 
-# graph = create_manager(
-#     symbol=symbol,
-#     analysis_date=date,
-#     data_source=data_source,
-#     benchmark=benchmark,
-#     fx=fx,
-# )
+graph = create_manager(
+    symbol=symbol,
+    analysis_date=date,
+    data_source=data_source,
+    benchmark=benchmark,
+    fx=fx,
+)
 
-# result = graph.invoke({
-#     "symbol":        symbol,
-#     "analysis_date": date,
-#     "data_source":   data_source,
-#     "benchmark":     benchmark,
-#     "fx":            fx,
-# })
+result = graph.invoke(
+    graph._initial_state
+    )
 
-# rich.print(result)
+rich.print(result["final_output"])
 
 
 # from techa.agents.patterns import create_pattern_agent
@@ -43,7 +39,7 @@ import rich
 # rich.print(result["final_output"])
 # rich.print(result)
 
-from techa.agents.indicators import create_indicator_agent
-g = create_indicator_agent("PST.MI")
-r = g.invoke(g._initial_state)
-rich.print(r["final_output"])
+# from techa.agents.indicators import create_indicator_agent
+# g = create_indicator_agent("PST.MI")
+# r = g.invoke(g._initial_state)
+# rich.print(r["final_output"])
