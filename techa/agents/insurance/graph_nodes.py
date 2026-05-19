@@ -23,6 +23,7 @@ from techa.agents._common import get_result_by_id
 from techa.agents._llm import SYNTHESIS_MODEL
 from techa.agents.insurance.graph_state import InsuranceAnalysisState
 from techa.agents.insurance._tools.prepare_tools import build_payload
+from techa.agents.insurance._tools.decision_record import derive_decision
 from techa.agents.insurance._subagents import WORKER_REGISTRY
 
 log = logging.getLogger(__name__)
@@ -297,6 +298,21 @@ def synthesise_node(state: InsuranceAnalysisState) -> dict:
     medical_str    = _fmt("medical_underwriting")
     claims_str     = _fmt("claims_assessor")
 
+    # Derive structured decision record deterministically — no LLM call needed
+    results = state.get("results", [])
+    try:
+        decision_record = derive_decision(results, assessment_date)
+        decision_dict   = decision_record.model_dump()
+        log.info(
+            "[synthesise] decision=%s loading=%.1f%% confidence=%s",
+            decision_dict["decision"],
+            decision_dict["recommended_loading_pct"],
+            decision_dict["confidence"],
+        )
+    except Exception as exc:
+        log.error("[synthesise] derive_decision failed: %s", exc, exc_info=True)
+        decision_dict = None
+
     log.info("[synthesise] generating underwriting decision for %s", policy_id)
     try:
         brief = _call_synthesis_llm(
@@ -311,11 +327,11 @@ def synthesise_node(state: InsuranceAnalysisState) -> dict:
     except Exception as exc:
         log.error("[synthesise] LLM call failed: %s", exc, exc_info=True)
         raw = json.dumps(
-            {r["agent_id"]: r for r in state.get("results", [])},
+            {r["agent_id"]: r for r in results},
             indent=2,
             default=str,
         )
         brief = f"Synthesis failed: {exc}\n\nRaw specialist results:\n{raw}"
 
     log.info("[synthesise] underwriting brief generated (%d chars)", len(brief))
-    return {"final_output": brief}
+    return {"final_output": brief, "decision": decision_dict}

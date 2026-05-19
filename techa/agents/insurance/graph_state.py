@@ -47,4 +47,14 @@ class InsuranceAnalysisState(TypedDict, total=False):
     # Each WorkerResult: {"agent_id": str, "data": dict, "error": str | None}
 
     # ── Set by synthesise_node ─────────────────────────────────────────────────
-    final_output: Annotated[str, _last]  # final underwriting decision brief from Life Head of Business
+    final_output: Annotated[str,           _last]  # narrative underwriting brief (Life Head of Business)
+    decision:     Annotated[Optional[dict], _last]  # DecisionRecord.model_dump() — machine-readable verdict
+    # decision shape:
+    # {
+    #   "decision":                "accept" | "refer" | "decline",
+    #   "recommended_loading_pct": float,   # blended: actuarial×0.40 + medical×0.35 + claims×0.25
+    #   "conditions":              list[str],  # exclusions + evidence requirements
+    #   "review_date":             "YYYY-MM-DD" | None,
+    #   "primary_driver":          str,
+    #   "confidence":              "high" | "medium" | "low",
+    # }

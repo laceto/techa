@@ -26,7 +26,13 @@ import pandas as pd
 from techa.insurance import build_kpi_snapshot
 from techa.underwriting import build_medical_snapshot
 from techa.claims import build_claims_snapshot
-from techa.actuarial import build_ae_snapshot, build_pricing_snapshot, build_inforce_snapshot
+from techa.actuarial import (
+    build_ae_snapshot,
+    build_pricing_snapshot,
+    build_inforce_snapshot,
+    build_geo_snapshot,
+    build_concentration_snapshot,
+)
 
 log = logging.getLogger(__name__)
 
@@ -265,12 +271,14 @@ def build_payload(policy_id: str, risk_profile: dict | None) -> dict:
         "coverage":          coverage,
         "claims_history":    claims,
         "financial_metrics": fin,
-        "kpi_snapshot":      None,
-        "medical_snapshot":  None,
-        "claims_snapshot":   None,
-        "ae_snapshot":       None,
-        "pricing_snapshot":  None,
-        "inforce_snapshot":  None,
+        "kpi_snapshot":             None,
+        "medical_snapshot":         None,
+        "claims_snapshot":          None,
+        "ae_snapshot":              None,
+        "pricing_snapshot":         None,
+        "inforce_snapshot":         None,
+        "geo_snapshot":             None,
+        "concentration_snapshot":   None,
     }
 
     # ── Accountant KPI snapshot from financial history time series ────────────
@@ -363,8 +371,38 @@ def build_payload(policy_id: str, risk_profile: dict | None) -> dict:
         except Exception as exc:
             log.warning("[prepare] inforce_snapshot failed: %s", exc)
 
+    # ── Geospatial / epidemiological enrichment snapshot ─────────────────────
+    geo_data = profile.get("geo_data")
+    if geo_data:
+        try:
+            geo = build_geo_snapshot(geo_data, nan_to_none=True)
+            payload["geo_snapshot"] = geo
+            log.info(
+                "[prepare] geo_snapshot built: area=%s imd=%s regional_ae=%s geo_risk=%s",
+                geo.get("postcode_area"), geo.get("imd_decile"),
+                geo.get("regional_ae_index"), geo.get("geo_risk_level"),
+            )
+        except Exception as exc:
+            log.warning("[prepare] geo_snapshot failed: %s", exc)
+
+    # ── Portfolio concentration snapshot ──────────────────────────────────────
+    portfolio_context = profile.get("portfolio_context")
+    if portfolio_context:
+        try:
+            con = build_concentration_snapshot(portfolio_context, nan_to_none=True)
+            payload["concentration_snapshot"] = con
+            log.info(
+                "[prepare] concentration_snapshot built: sa_conc=%.4f%% flag=%s reins_trigger=%s",
+                con.get("sa_concentration_pct", 0),
+                con.get("concentration_flag"),
+                con.get("reinsurance_trigger"),
+            )
+        except Exception as exc:
+            log.warning("[prepare] concentration_snapshot failed: %s", exc)
+
     log.info(
-        "[prepare] payload built: policy=%s kpi=%s med=%s claims=%s ae=%s pricing=%s inforce=%s",
+        "[prepare] payload built: policy=%s kpi=%s med=%s claims=%s "
+        "ae=%s pricing=%s inforce=%s geo=%s conc=%s",
         policy_id,
         "yes" if payload["kpi_snapshot"] else "no",
         "yes" if payload["medical_snapshot"] else "no",
@@ -372,5 +410,7 @@ def build_payload(policy_id: str, risk_profile: dict | None) -> dict:
         "yes" if payload["ae_snapshot"] else "no",
         "yes" if payload["pricing_snapshot"] else "no",
         "yes" if payload["inforce_snapshot"] else "no",
+        "yes" if payload["geo_snapshot"] else "no",
+        "yes" if payload["concentration_snapshot"] else "no",
     )
     return payload

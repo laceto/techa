@@ -78,6 +78,34 @@ are present; each is independent — the absence of one does not invalidate the 
   Interpretation: solvency_status=breach or lapse_trend_direction=deteriorating requires
   immediate management action. bel_to_annualised_gwp > 5× indicates heavy long-tail reserves.
 
+━━━ Tool 4: geo_snapshot — Geospatial / epidemiological enrichment ━━━
+  postcode_area, imd_decile
+  imd_risk_band                                — high (1–3) / elevated (4–6) / low (7–10)
+  imd_loading_pct                              — 15% (decile 1–3) / 5% (4–6) / 0% (7–10)
+  regional_ae_index                            — local mortality vs national (1.0 = national)
+  regional_ae_loading_pct                      — (ae_index − 1) × 100, clamped [−20, +30]
+  hospital_quality_score, hospital_access_loading_pct  — 5% if score < 50
+  geo_total_loading_pct                        — sum of above, clamped [0, 40]
+  geo_risk_level                               — low / elevated / high
+
+  Interpretation: geo_total_loading_pct should be added to individual mortality loading.
+  A high-deprivation area (imd_decile 1–3) combined with regional_ae_index > 1.15
+  materially elevates expected claims frequency.
+
+━━━ Tool 5: concentration_snapshot — Portfolio concentration risk ━━━
+  policy_sum_assured, portfolio_total_sa, portfolio_policy_count
+  sa_concentration_pct                         — this policy / total SA × 100
+  avg_policy_sa                                — portfolio_total_sa / policy_count
+  sa_multiple_of_average                       — how many × larger than avg policy
+  concentration_flag                           — True if > 0.5% of SA or > 5× average
+  concentration_loading_pct                    — 0 / 5 / 10 / 20% tiered by sa_multiple
+  net_retention_recommendation                 — suggested per-life reinsurance retention (£)
+  reinsurance_trigger                          — True if sum_assured > retention limit
+  concentration_risk_level                     — low / elevated / high
+
+  Interpretation: reinsurance_trigger=True means this policy exceeds the recommended
+  retention limit — cession to a reinsurer is required before policy issuance.
+
 ━━━ Fallback (when snapshots are absent) ━━━
   Use raw applicant and financial_metrics fields:
   - age/gender baseline: male +20–30% vs female at ages 40–60; each decade above 50 adds ~50% mortality.
@@ -176,7 +204,10 @@ def ask_actuarial_analyst(
     actuarial_data: dict = {}
 
     # Prefer pre-computed snapshots; include all that are present
-    for snap_key in ("ae_snapshot", "pricing_snapshot", "inforce_snapshot"):
+    for snap_key in (
+        "ae_snapshot", "pricing_snapshot", "inforce_snapshot",
+        "geo_snapshot", "concentration_snapshot",
+    ):
         snap = payload.get(snap_key)
         if snap:
             actuarial_data[snap_key] = snap
@@ -191,8 +222,11 @@ def ask_actuarial_analyst(
         if "financial_metrics" in payload:
             actuarial_data["financial_metrics"] = payload["financial_metrics"]
 
-    has_snapshots = any(k in actuarial_data
-                        for k in ("ae_snapshot", "pricing_snapshot", "inforce_snapshot"))
+    _PORTFOLIO_SNAP_KEYS = (
+        "ae_snapshot", "pricing_snapshot", "inforce_snapshot",
+        "geo_snapshot", "concentration_snapshot",
+    )
+    has_snapshots = any(k in actuarial_data for k in _PORTFOLIO_SNAP_KEYS)
     data_label = "Actuarial snapshots (pre-computed KPIs)" if has_snapshots else "Actuarial data"
 
     user_content = (
