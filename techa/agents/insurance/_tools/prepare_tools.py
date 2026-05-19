@@ -24,6 +24,7 @@ from datetime import date
 import pandas as pd
 
 from techa.insurance import build_kpi_snapshot
+from techa.underwriting import build_medical_snapshot
 
 log = logging.getLogger(__name__)
 
@@ -181,6 +182,7 @@ def build_payload(policy_id: str, risk_profile: dict | None) -> dict:
         "claims_history":    claims,
         "financial_metrics": fin,
         "kpi_snapshot":      None,
+        "medical_snapshot":  None,
     }
 
     # ── Accountant KPI snapshot from financial history time series ────────────
@@ -201,12 +203,27 @@ def build_payload(policy_id: str, risk_profile: dict | None) -> dict:
         except Exception as exc:
             log.warning("[prepare] kpi_snapshot failed (falling back to financial_metrics): %s", exc)
 
+    # ── Medical underwriting snapshot from applicant questionnaire ───────────
+    try:
+        med = build_medical_snapshot(applicant, nan_to_none=True)
+        payload["medical_snapshot"] = med
+        log.info(
+            "[prepare] medical_snapshot built: age=%s gender=%s risk_score=%.1f total_loading=%.1f",
+            applicant.get("age"),
+            applicant.get("gender"),
+            med.get("risk_score", 0),
+            med.get("total_medical_loading_pct", 0),
+        )
+    except Exception as exc:
+        log.warning("[prepare] medical_snapshot failed (falling back to raw applicant): %s", exc)
+
     log.info(
-        "[prepare] payload built: policy=%s product=%s age=%s bmi_cat=%s kpi=%s",
+        "[prepare] payload built: policy=%s product=%s age=%s bmi_cat=%s kpi=%s med=%s",
         policy_id,
         payload["product_type"],
         applicant.get("age"),
         applicant.get("bmi_category"),
         "yes" if payload["kpi_snapshot"] else "no",
+        "yes" if payload["medical_snapshot"] else "no",
     )
     return payload
