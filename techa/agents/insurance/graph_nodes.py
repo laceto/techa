@@ -22,10 +22,11 @@ import json
 import logging
 
 from techa.agents._common import get_result_by_id
-from techa.agents._llm import SYNTHESIS_MODEL
+from techa.agents._llm import MODEL, SYNTHESIS_MODEL
 from techa.agents.insurance.graph_state import InsuranceAnalysisState
 from techa.agents.insurance._tools.prepare_tools import build_payload
 from techa.agents.insurance._tools.decision_record import derive_decision
+from techa.agents.insurance._audit import append_audit_record
 from techa.agents.insurance._subagents import WORKER_REGISTRY
 
 log = logging.getLogger(__name__)
@@ -405,4 +406,15 @@ def synthesise_node(state: InsuranceAnalysisState) -> dict:
         brief = f"Synthesis failed: {exc}\n\nRaw specialist results:\n{raw}"
 
     log.info("[synthesise] underwriting brief generated (%d chars)", len(brief))
+
+    append_audit_record(
+        policy_id        = policy_id,
+        assessment_date  = assessment_date,
+        decision_dict    = decision_dict,
+        fraud_risk_level = state.get("fraud_risk_level"),
+        results          = results,
+        final_output     = brief,
+        model            = MODEL,
+    )
+
     return {"final_output": brief, "decision": decision_dict}
