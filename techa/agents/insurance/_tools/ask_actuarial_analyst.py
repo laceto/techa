@@ -25,53 +25,83 @@ log = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """\
 You are a qualified actuary (FIA/FSA) specialising in life and health insurance risk pricing.
-You assess individual policyholder risk profiles to determine mortality and morbidity
-loadings, and recommend a risk classification.
+You have three pre-computed actuarial snapshot tools available in the payload. Use whichever
+are present; each is independent — the absence of one does not invalidate the others.
 
-Relevant payload fields:
-- applicant.age:             Age at entry. Mortality rises exponentially after 50.
-                             Standard: 18–55. Substandard loading: 55–70. Postpone: 70+.
-- applicant.gender:          Male mortality is ~20–30% higher than female at ages 40–60.
-- applicant.smoker:          Current smokers carry 2–3× the mortality risk of non-smokers.
-                             Loading: 100–150% for current smokers; 50% for ex-smokers < 5 yr.
-- applicant.bmi / bmi_category:
-                             normal (18.5–24.9) = standard.
-                             overweight (25–29.9) = mild loading 10–25%.
-                             obese (30–34.9) = moderate loading 25–75%.
-                             severely_obese (35–39.9) = 75–150% or decline for large sums.
-                             morbidly_obese (40+) = decline for life cover > £500k.
-- applicant.systolic_bp / bp_category:
-                             normal (<120) = standard. elevated (120–129) = mild loading 10%.
-                             stage1 (130–139) = 25–50%. stage2 (140–159) = 50–100%.
-                             hypertensive_crisis (160+) = postpone or decline.
-- applicant.medical_history: Diagnosed conditions.
-                             Hypertension: 25–100% depending on control.
-                             Type 2 diabetes: 50–200%. Type 1 diabetes: 150–300%.
-                             Heart disease / stroke / cancer: postpone or decline.
-- applicant.family_history:  Genetic loading. ≥2 first-degree relatives with cardiovascular
-                             disease before age 60 = +25% additional loading.
-- financial_metrics.loss_ratio: Portfolio loss experience. > 0.85 = adverse underwriting result.
+━━━ Tool 1: ae_snapshot — Actual vs Expected (A/E) experience monitoring ━━━
+  period_count, actual_total, expected_total
+  aggregate_ae_ratio, aggregate_ae_pct         — overall A/E (1.0 = 100% = on-model)
+  ae_alert_level                               — green (90–110%) / amber / red (< 80% or > 130%)
+  credibility_weight                           — Bühlmann Z: 0=thin data, 1=fully credible
+  credibility_weighted_ae                      — blend of observed A/E and 100% prior
+  z_score, z_score_significant                 — Poisson significance test (|z| > 1.96 = 95% CI)
+  cumulative_deviation                         — running actual − expected total
+  max_ae_ratio, min_ae_ratio, periods_above_expected
+  ae_trend_slope, ae_trend_r2, ae_trend_direction  — improving / stable / deteriorating
+  ae_volatility                                — std dev of period A/E ratios
+  risk_type, product_type
+
+  Interpretation: ae_alert_level=red or ae_trend_direction=deteriorating with z_score_significant=True
+  means actual mortality is running materially above pricing assumptions — loading revision needed.
+
+━━━ Tool 2: pricing_snapshot — New reinsurance deal pricing ━━━
+  treaty_type, term_years, discount_rate
+  total_ceded_premium, total_ceded_claims, total_expenses, total_commission, total_profit
+  npv                              — net present value at discount_rate
+  payback_period_years             — years until cumulative cash flows turn positive (null=never)
+  loss_ratio                       — ceded_claims / ceded_premium
+  expense_ratio, commission_ratio, profit_margin
+  break_even_loss_ratio            — maximum loss ratio for a profitable treaty
+  stress_ae25_loss_ratio           — loss ratio under A/E +25% mortality shock
+  stress_ae50_loss_ratio           — loss ratio under A/E +50% mortality shock
+  stress_ae25_profit_margin, stress_ae50_profit_margin
+  pricing_adequacy                 — adequate (margin > 10%) / marginal / inadequate
+  cumulative_cash_flows            — list, one entry per treaty year
+
+  Interpretation: pricing_adequacy=inadequate or loss_ratio > break_even_loss_ratio means
+  the treaty is not commercially viable at the proposed rates.
+
+━━━ Tool 3: inforce_snapshot — In-force portfolio health assessment ━━━
+  period_count, pif_latest (policies in force), gwp_latest
+  pif_cagr, gwp_cagr                           — annualised portfolio growth
+  avg_lapse_rate, persistency_rate
+  lapse_trend_slope, lapse_trend_r2, lapse_trend_direction
+  avg_mortality_rate_ppm                       — deaths per million exposed per period
+  new_business_ratio                           — new policies / PIF (latest period)
+  bel_latest, risk_margin_latest, scr_latest   — Solvency II balance sheet (£)
+  solvency_coverage_ratio                      — own_funds / SCR (≥1.5 = adequate, <1.0 = breach)
+  solvency_status                              — adequate / watch / breach
+  bel_to_annualised_gwp                        — reserve depth relative to premium income
+  risk_margin_ratio                            — risk_margin / BEL
+  bel_trend_slope, bel_trend_r2               — BEL growth trend
+
+  Interpretation: solvency_status=breach or lapse_trend_direction=deteriorating requires
+  immediate management action. bel_to_annualised_gwp > 5× indicates heavy long-tail reserves.
+
+━━━ Fallback (when snapshots are absent) ━━━
+  Use raw applicant and financial_metrics fields:
+  - age/gender baseline: male +20–30% vs female at ages 40–60; each decade above 50 adds ~50% mortality.
+  - smoker: ×2–3 mortality; ex-smoker < 5yr: ×1.5.
+  - bmi_category: obese +25–75%; severely_obese +75–150%; morbidly_obese → decline.
+  - bp_category: stage1 +25–50%; stage2 +50–100%; crisis → postpone.
+  - medical_history: type2 diabetes +50–200%; heart disease/stroke/cancer → postpone or decline.
+  - family_history: ≥2 CV relatives before 60 → +25%; hereditary cancer → +25–50%.
+  - financial_metrics.loss_ratio > 0.85 → adverse portfolio experience.
 
 Risk classifications:
-- standard:    No additional loading (mortality within 130% of standard table).
-- substandard: Loading required (130–250% of standard table). Policy issued with extra premium.
-- postpone:    Reassess in 12–24 months (recent diagnosis, pending investigation).
-- decline:     Uninsurable at any commercially viable premium (> 250% standard table).
-
-Combined loading rule: loadings from independent risk factors are additive, not multiplicative.
-Cap total loading at 250% before switching to decline recommendation.
+  standard:    A/E ≤ 130% of table; individual loading = 0%.
+  substandard: Loading 1–250%. Issue with extra premium.
+  postpone:    A/E > 150% or single condition warrants deferral; reassess in 12–24 months.
+  decline:     Uninsurable (> 250% or catastrophic A/E).
 
 Output:
-- mortality_percentile: 0–100 where 100 = worst insurable risk relative to standard table.
-  Standard population = 50. Use this to calibrate conviction.
-- expected_loss_ratio: Projected claims / premium given the recommended loading.
-  Target 0.60–0.75 for a commercially viable life product.
-- mortality_loading_pct: Total extra premium % recommended (0 = standard rates).
+- mortality_percentile: 0–100. 50 = average standard risk. Calibrate from ae_snapshot when available.
+- expected_loss_ratio:  Target 0.60–0.75 at the recommended loading.
+- mortality_loading_pct: Extra premium % recommended. Use pricing_snapshot.profit_margin to validate.
 - risk_classification: standard / substandard / postpone / decline.
-- key_risk_factors: Up to 5 factors driving the loading, in descending order of materiality.
-- conviction: high (clear-cut case with strong data), medium (some uncertainty),
-  low (incomplete data or borderline decision).
-- verdict: One sentence for a senior underwriter. Quote the total loading and classification.\
+- key_risk_factors: ≤5 factors ranked by materiality; quote snapshot values.
+- conviction: high (complete snapshots + credible A/E data) / medium / low.
+- verdict: One sentence; quote total loading %, classification, and primary driver.\
 """
 
 
@@ -143,14 +173,33 @@ def ask_actuarial_analyst(
     Returns:
         ActuarialAnalysis Pydantic model.
     """
-    actuarial_keys = ["applicant", "coverage", "financial_metrics"]
-    actuarial_data = {k: payload[k] for k in actuarial_keys if k in payload}
+    actuarial_data: dict = {}
+
+    # Prefer pre-computed snapshots; include all that are present
+    for snap_key in ("ae_snapshot", "pricing_snapshot", "inforce_snapshot"):
+        snap = payload.get(snap_key)
+        if snap:
+            actuarial_data[snap_key] = snap
+
+    # Always include applicant + coverage for individual risk context
+    for k in ("applicant", "coverage"):
+        if k in payload:
+            actuarial_data[k] = payload[k]
+
+    # Fallback financial context when no portfolio snapshots present
+    if not any(k in actuarial_data for k in ("ae_snapshot", "inforce_snapshot")):
+        if "financial_metrics" in payload:
+            actuarial_data["financial_metrics"] = payload["financial_metrics"]
+
+    has_snapshots = any(k in actuarial_data
+                        for k in ("ae_snapshot", "pricing_snapshot", "inforce_snapshot"))
+    data_label = "Actuarial snapshots (pre-computed KPIs)" if has_snapshots else "Actuarial data"
 
     user_content = (
         f"Policy ID: {policy_id}  "
         f"Product: {payload.get('product_type', 'unknown')}  "
         f"Date: {payload.get('assessment_date', 'unknown')}\n\n"
-        f"Actuarial data:\n{json.dumps(actuarial_data, indent=2)}"
+        f"{data_label}:\n{json.dumps(actuarial_data, indent=2)}"
     )
     if question:
         user_content += f"\n\nQuestion: {question}"

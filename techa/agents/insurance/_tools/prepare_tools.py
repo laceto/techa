@@ -26,6 +26,7 @@ import pandas as pd
 from techa.insurance import build_kpi_snapshot
 from techa.underwriting import build_medical_snapshot
 from techa.claims import build_claims_snapshot
+from techa.actuarial import build_ae_snapshot, build_pricing_snapshot, build_inforce_snapshot
 
 log = logging.getLogger(__name__)
 
@@ -97,6 +98,62 @@ _DEMO_PROFILE: dict = {
         "reserve_required":       14_200,
         "reserve_adequacy_pct":   105.6,
         "premium_growth_yoy_pct": 8.5,
+    },
+    # Actuarial tool 1: A/E monitoring (portfolio mortality experience)
+    "ae_data": {
+        "risk_type":    "mortality",
+        "product_type": "term_life",
+        "periods": [
+            {"period": "2022-Q3", "actual_claims": 38, "expected_claims": 40.0, "exposed_lives": 9_500},
+            {"period": "2022-Q4", "actual_claims": 41, "expected_claims": 40.5, "exposed_lives": 9_700},
+            {"period": "2023-Q1", "actual_claims": 43, "expected_claims": 41.0, "exposed_lives": 9_900},
+            {"period": "2023-Q2", "actual_claims": 46, "expected_claims": 41.5, "exposed_lives": 10_100},
+            {"period": "2023-Q3", "actual_claims": 49, "expected_claims": 42.0, "exposed_lives": 10_300},
+            {"period": "2023-Q4", "actual_claims": 53, "expected_claims": 42.5, "exposed_lives": 10_500},
+        ],
+    },
+    # Actuarial tool 2: Reinsurance deal pricing (5-year quota share)
+    "pricing_data": {
+        "treaty_type":   "quota_share",
+        "discount_rate": 0.05,
+        "cash_flows": [
+            {"ceded_premium": 480_000, "ceded_claims": 200_000, "expenses": 24_000, "commission": 96_000},
+            {"ceded_premium": 500_000, "ceded_claims": 215_000, "expenses": 25_000, "commission": 100_000},
+            {"ceded_premium": 520_000, "ceded_claims": 228_000, "expenses": 26_000, "commission": 104_000},
+            {"ceded_premium": 540_000, "ceded_claims": 240_000, "expenses": 27_000, "commission": 108_000},
+            {"ceded_premium": 560_000, "ceded_claims": 252_000, "expenses": 28_000, "commission": 112_000},
+        ],
+    },
+    # Actuarial tool 3: In-force portfolio assessment (6 quarters)
+    "inforce_data": {
+        "periods_per_year": 4,
+        "product_type":     "term_life",
+        "periods": [
+            {"period": "2022-Q3", "policies_in_force": 9_500,  "gross_premium_income": 2_375_000,
+             "new_policies": 380, "lapses": 76, "deaths": 38,
+             "best_estimate_liability": 42_000_000, "risk_margin": 2_100_000,
+             "solvency_capital_requirement": 4_800_000, "own_funds": 8_200_000},
+            {"period": "2022-Q4", "policies_in_force": 9_750,  "gross_premium_income": 2_437_500,
+             "new_policies": 400, "lapses": 72, "deaths": 35,
+             "best_estimate_liability": 43_200_000, "risk_margin": 2_160_000,
+             "solvency_capital_requirement": 4_900_000, "own_funds": 8_600_000},
+            {"period": "2023-Q1", "policies_in_force": 9_900,  "gross_premium_income": 2_475_000,
+             "new_policies": 410, "lapses": 75, "deaths": 33,
+             "best_estimate_liability": 44_500_000, "risk_margin": 2_225_000,
+             "solvency_capital_requirement": 5_000_000, "own_funds": 8_900_000},
+            {"period": "2023-Q2", "policies_in_force": 10_100, "gross_premium_income": 2_525_000,
+             "new_policies": 430, "lapses": 70, "deaths": 30,
+             "best_estimate_liability": 45_500_000, "risk_margin": 2_275_000,
+             "solvency_capital_requirement": 5_100_000, "own_funds": 9_300_000},
+            {"period": "2023-Q3", "policies_in_force": 10_300, "gross_premium_income": 2_575_000,
+             "new_policies": 445, "lapses": 68, "deaths": 28,
+             "best_estimate_liability": 46_800_000, "risk_margin": 2_340_000,
+             "solvency_capital_requirement": 5_200_000, "own_funds": 9_700_000},
+            {"period": "2023-Q4", "policies_in_force": 10_500, "gross_premium_income": 2_625_000,
+             "new_policies": 460, "lapses": 65, "deaths": 26,
+             "best_estimate_liability": 47_800_000, "risk_margin": 2_390_000,
+             "solvency_capital_requirement": 5_300_000, "own_funds": 10_100_000},
+        ],
     },
 }
 
@@ -211,6 +268,9 @@ def build_payload(policy_id: str, risk_profile: dict | None) -> dict:
         "kpi_snapshot":      None,
         "medical_snapshot":  None,
         "claims_snapshot":   None,
+        "ae_snapshot":       None,
+        "pricing_snapshot":  None,
+        "inforce_snapshot":  None,
     }
 
     # ── Accountant KPI snapshot from financial history time series ────────────
@@ -261,14 +321,56 @@ def build_payload(policy_id: str, risk_profile: dict | None) -> dict:
         except Exception as exc:
             log.warning("[prepare] claims_snapshot failed (falling back to claims_history): %s", exc)
 
+    # ── Actuarial A/E monitoring snapshot ────────────────────────────────────
+    ae_data = profile.get("ae_data")
+    if ae_data:
+        try:
+            ae = build_ae_snapshot(ae_data, nan_to_none=True)
+            payload["ae_snapshot"] = ae
+            log.info(
+                "[prepare] ae_snapshot built: risk=%s periods=%d ae_pct=%s alert=%s trend=%s",
+                ae.get("risk_type"), ae.get("period_count"),
+                ae.get("aggregate_ae_pct"), ae.get("ae_alert_level"),
+                ae.get("ae_trend_direction"),
+            )
+        except Exception as exc:
+            log.warning("[prepare] ae_snapshot failed: %s", exc)
+
+    # ── Actuarial reinsurance pricing snapshot ────────────────────────────────
+    pricing_data = profile.get("pricing_data")
+    if pricing_data:
+        try:
+            pr = build_pricing_snapshot(pricing_data, nan_to_none=True)
+            payload["pricing_snapshot"] = pr
+            log.info(
+                "[prepare] pricing_snapshot built: treaty=%s loss_ratio=%s adequacy=%s",
+                pr.get("treaty_type"), pr.get("loss_ratio"), pr.get("pricing_adequacy"),
+            )
+        except Exception as exc:
+            log.warning("[prepare] pricing_snapshot failed: %s", exc)
+
+    # ── Actuarial in-force portfolio snapshot ─────────────────────────────────
+    inforce_data = profile.get("inforce_data")
+    if inforce_data:
+        try:
+            inf = build_inforce_snapshot(inforce_data, nan_to_none=True)
+            payload["inforce_snapshot"] = inf
+            log.info(
+                "[prepare] inforce_snapshot built: pif=%s solvency=%s lapse_trend=%s",
+                inf.get("pif_latest"), inf.get("solvency_status"),
+                inf.get("lapse_trend_direction"),
+            )
+        except Exception as exc:
+            log.warning("[prepare] inforce_snapshot failed: %s", exc)
+
     log.info(
-        "[prepare] payload built: policy=%s product=%s age=%s bmi_cat=%s kpi=%s med=%s claims=%s",
+        "[prepare] payload built: policy=%s kpi=%s med=%s claims=%s ae=%s pricing=%s inforce=%s",
         policy_id,
-        payload["product_type"],
-        applicant.get("age"),
-        applicant.get("bmi_category"),
         "yes" if payload["kpi_snapshot"] else "no",
         "yes" if payload["medical_snapshot"] else "no",
         "yes" if payload["claims_snapshot"] else "no",
+        "yes" if payload["ae_snapshot"] else "no",
+        "yes" if payload["pricing_snapshot"] else "no",
+        "yes" if payload["inforce_snapshot"] else "no",
     )
     return payload
