@@ -1,8 +1,13 @@
 """
 agents/insurance/_tools/ask_accountant.py — Insurance accountant AI analyst.
 
-Reviews financial metrics: premium income, loss ratios, expense ratios, and
-reserve adequacy. Returns a structured AccountingAnalysis.
+Reviews financial KPIs: loss ratios, expense ratios, combined ratio, reserve adequacy,
+premium growth trends, and portfolio quality. Returns a structured AccountingAnalysis.
+
+When payload["kpi_snapshot"] is present (computed by techa.insurance.build_kpi_snapshot
+from a financial history time series), the richer computed KPIs — including OLS trend
+slopes, CAGR, reserve adequacy ratios, and YoY growth — are sent to the model instead
+of the raw scalar financial_metrics. The fallback is the scalar financial_metrics dict.
 """
 
 from __future__ import annotations
@@ -27,41 +32,77 @@ SYSTEM_PROMPT = """\
 You are a qualified insurance accountant (CIMA/ACA) with 15+ years in life and health insurance.
 You assess the financial viability, reserve adequacy, and profitability of insurance arrangements.
 
-Relevant payload fields:
-- financial_metrics.loss_ratio:         Net claims incurred / gross premium earned.
-                                         < 0.60 = excellent. 0.60–0.75 = good.
-                                         0.75–0.85 = acceptable. > 0.85 = adverse.
-- financial_metrics.expense_ratio:      Management expenses / gross premium.
-                                         < 0.25 = efficient. 0.25–0.35 = normal.
-                                         > 0.35 = high (may indicate operational issues).
-- financial_metrics.combined_ratio:     loss_ratio + expense_ratio.
-                                         < 0.85 = profitable. 0.85–1.00 = marginal.
-                                         > 1.00 = loss-making (every £1 premium costs > £1 in claims + expenses).
-- financial_metrics.reserve_held:       Actual reserve balance held (£).
-- financial_metrics.reserve_required:   Minimum reserve required by actuarial calculation (£).
-- financial_metrics.reserve_adequacy_pct: reserve_held / reserve_required × 100.
-                                         < 100% = under-reserved (regulatory breach risk).
-                                         100–120% = adequate. > 120% = over-reserved (capital inefficiency).
-- financial_metrics.premium_growth_yoy_pct: Year-on-year growth in gross premium income (%).
-                                         > 10% = strong growth. 0–10% = steady. < 0% = shrinking.
-- coverage.premium_annual:              Annualised premium for this policy (£).
-- coverage.sum_assured:                 Death benefit / cover amount (£). Key for reserve sizing.
+You will receive either a kpi_snapshot (preferred — computed from multi-period financial history)
+or a raw financial_metrics dict (single-period scalars). Use whichever is present; prefer kpi_snapshot.
 
-Interpretation guidelines:
-- A loss ratio above 0.85 on a life product is a red flag; life products should be
-  profitable after year 3 once acquisition costs are recovered.
-- Reserve adequacy below 100% requires immediate attention and regulator notification.
-- Combined ratio > 1.00 for more than two consecutive years signals structural repricing need.
-- High premium growth with deteriorating loss ratios indicates adverse selection.
+─── KPI SNAPSHOT FIELDS (when kpi_snapshot is present) ───────────────────────────────────────
+
+Profitability (current period):
+- loss_ratio             — net claims incurred / GWP. < 0.60 = excellent. 0.75–0.85 = acceptable. > 0.85 = adverse.
+- expense_ratio          — expenses / GWP. < 0.25 = efficient. > 0.35 = high.
+- combined_ratio         — loss_ratio + expense_ratio. < 0.85 = profitable. > 1.00 = loss-making.
+- underwriting_margin_pct — (1 − combined_ratio) × 100. Positive = underwriting profit.
+- underwriting_profit    — GWP − claims_incurred − expenses (£ absolute P&L).
+- reinsurance_cession_pct — % of GWP ceded to reinsurers. High = heavy reinsurance dependency.
+- net_claims_ratio       — claims / NWP (net-of-reinsurance loss ratio; higher than loss_ratio if cession % is high).
+
+Profitability trends (OLS slope over last N periods):
+- loss_ratio_trend       — slope of loss_ratio. Positive = deteriorating. Negative = improving.
+- loss_ratio_trend_r2    — R² of the slope. < 0.3 = noisy (trend unreliable). ≥ 0.7 = directional.
+- combined_ratio_trend   — slope of combined_ratio. Same interpretation.
+- combined_ratio_trend_r2
+- expense_ratio_trend    — slope of expense_ratio (positive = rising costs).
+- expense_ratio_trend_r2
+
+Reserve adequacy:
+- reserve_adequacy_ratio  — reserve_held / reserve_required. < 1.0 = regulatory breach risk.
+- reserve_adequacy_pct    — × 100. 100–120% = adequate. > 120% = over-reserved (capital tied up).
+- reserve_surplus         — reserve_held − reserve_required (£). Negative = deficit.
+- reserve_to_gwp_pct      — reserve_held / GWP × 100. Contextual depth indicator.
+- claims_settlement_ratio — claims_paid / claims_incurred (0–1). 1 = all claims settled in period.
+- claims_outstanding      — claims_incurred − claims_paid (£). Approximate open liability.
+- claims_outstanding_ratio — claims_outstanding / GWP × 100.
+- reserve_adequacy_trend  — slope of adequacy_ratio. Positive = reserves improving vs. requirement.
+- reserve_adequacy_trend_r2
+
+Growth:
+- gwp_latest             — GWP this period (£).
+- nwp_latest             — NWP this period (£).
+- premium_growth_pp      — period-over-period GWP growth (%). Negative = premium income falling.
+- premium_growth_yoy     — year-over-year GWP growth (%).
+- claims_growth_pp       — period-over-period claims growth (%). If > premium_growth_pp = loss ratio worsening.
+- claims_growth_yoy      — year-over-year claims growth (%).
+- gwp_cagr               — CAGR of GWP over full history (%). Core volume growth metric.
+- gwp_trend              — OLS slope of GWP (£/period). Positive = growing book.
+- gwp_trend_r2           — R² of GWP trend.
+- avg_premium            — GWP / policies_in_force (£/policy). Rising = premium rate hardening.
+- lapse_rate             — % of policies that lapsed in the period. > 15% = retention problem.
+- new_business_ratio     — new_policies / policies_in_force × 100. Growth composition indicator.
+
+─── FALLBACK FINANCIAL_METRICS FIELDS (when kpi_snapshot is absent) ──────────────────────────
+
+- financial_metrics.loss_ratio, expense_ratio, combined_ratio: as above.
+- financial_metrics.reserve_held, reserve_required, reserve_adequacy_pct: reserve position.
+- financial_metrics.premium_growth_yoy_pct: single YoY growth figure.
+- coverage.premium_annual, sum_assured: policy-level context.
+
+─── INTERPRETATION THRESHOLDS ────────────────────────────────────────────────────────────────
+
+- Loss ratio > 0.85 on life: structural repricing required.
+- Combined ratio > 1.00 for 2+ periods: business is loss-making at current rates.
+- Reserve adequacy < 100%: immediate regulatory notification required (Solvency II breach risk).
+- loss_ratio_trend > +0.01/period with R² ≥ 0.5: credible deterioration — flag for Chief Underwriter.
+- GWP growth > 15% with rising loss_ratio: adverse selection risk (growing into unprofitable segments).
+- claims_growth_pp > premium_growth_pp consistently: book is repricing below loss cost inflation.
 
 Output:
 - financial_health: overall financial position (strong / adequate / marginal / weak).
 - combined_ratio_assessment: profitable (< 0.85) / breakeven (0.85–1.00) / loss_making (> 1.00).
 - reserve_status: over_reserved / adequate / under_reserved.
-- reserve_adequacy_pct: the value from the payload.
-- profitability_outlook: forward-looking view given current trends (positive / neutral / negative).
-- premium_growth_assessment: strong / stable / declining based on premium_growth_yoy_pct.
-- conviction: high / medium / low based on data completeness and signal clarity.\
+- reserve_adequacy_pct: value from kpi_snapshot or financial_metrics.
+- profitability_outlook: forward-looking (positive / neutral / negative).
+- premium_growth_assessment: strong (> 10%) / stable (0–10%) / declining (< 0%).
+- conviction: high (multi-period KPI snapshot) / medium (single-period) / low (minimal data).\
 """
 
 
@@ -126,29 +167,45 @@ def ask_accountant(
     question: str | None = None,
 ) -> AccountingAnalysis:
     """
-    Send the financial metrics to the model for accounting analysis.
+    Send financial KPIs to the model for accounting analysis.
+
+    Prefers payload["kpi_snapshot"] (computed by techa.insurance.build_kpi_snapshot
+    from multi-period history) over the raw scalar payload["financial_metrics"].
+    Both paths are supported so the function degrades gracefully when only scalar
+    point-in-time data is available.
 
     Args:
-        payload:   Dict from prepare_node — contains financial_metrics and coverage.
+        payload:   Dict from prepare_node — contains kpi_snapshot (preferred),
+                   financial_metrics (fallback), and coverage.
         policy_id: Application reference string.
         question:  Optional follow-up question.
 
     Returns:
         AccountingAnalysis Pydantic model.
     """
-    accounting_keys = ["financial_metrics", "coverage"]
-    accounting_data = {k: payload[k] for k in accounting_keys if k in payload}
+    kpi_snapshot = payload.get("kpi_snapshot")
+
+    if kpi_snapshot:
+        financial_section = {"kpi_snapshot": kpi_snapshot, "coverage": payload.get("coverage", {})}
+        data_label = "KPI snapshot (multi-period)"
+        log.info("Sending kpi_snapshot for %s to %s", policy_id, MODEL)
+    else:
+        financial_section = {
+            "financial_metrics": payload.get("financial_metrics", {}),
+            "coverage": payload.get("coverage", {}),
+        }
+        data_label = "financial_metrics (single-period)"
+        log.info("Sending financial_metrics for %s to %s (no kpi_snapshot)", policy_id, MODEL)
 
     user_content = (
         f"Policy ID: {policy_id}  "
         f"Product: {payload.get('product_type', 'unknown')}  "
-        f"Date: {payload.get('assessment_date', 'unknown')}\n\n"
-        f"Financial data:\n{json.dumps(accounting_data, indent=2)}"
+        f"Date: {payload.get('assessment_date', 'unknown')}  "
+        f"Data: {data_label}\n\n"
+        f"Financial data:\n{json.dumps(financial_section, indent=2)}"
     )
     if question:
         user_content += f"\n\nQuestion: {question}"
-
-    log.info("Sending financial data for %s to %s", policy_id, MODEL)
 
     return invoke_structured(
         AccountingAnalysis,

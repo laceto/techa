@@ -6,6 +6,12 @@ Accepts a caller-supplied risk profile dict and enriches it with derived fields
 a consistent, fully-populated payload. If no profile is provided, a built-in demo
 profile is used so the graph can run end-to-end without real data.
 
+When risk_profile contains a "financial_history" key (list of period records with
+gwp / claims_incurred / expenses columns), build_payload calls build_kpi_snapshot()
+and embeds the computed accountant KPI snapshot in payload["kpi_snapshot"]. This
+gives ask_accountant access to derived KPIs (trends, CAGR, adequacy ratios) rather
+than just the raw scalar financial_metrics.
+
 Public API:
     build_payload(policy_id, risk_profile) -> dict
 """
@@ -14,6 +20,10 @@ from __future__ import annotations
 
 import logging
 from datetime import date
+
+import pandas as pd
+
+from techa.insurance import build_kpi_snapshot
 
 log = logging.getLogger(__name__)
 
@@ -170,13 +180,33 @@ def build_payload(policy_id: str, risk_profile: dict | None) -> dict:
         "coverage":          coverage,
         "claims_history":    claims,
         "financial_metrics": fin,
+        "kpi_snapshot":      None,
     }
 
+    # ── Accountant KPI snapshot from financial history time series ────────────
+    financial_history = profile.get("financial_history")
+    if financial_history:
+        try:
+            hist_df = pd.DataFrame(financial_history)
+            if "period" in hist_df.columns:
+                hist_df["period"] = pd.to_datetime(hist_df["period"])
+                hist_df = hist_df.set_index("period").sort_index()
+            kpi = build_kpi_snapshot(hist_df, nan_to_none=True)
+            payload["kpi_snapshot"] = kpi
+            log.info(
+                "[prepare] kpi_snapshot built from %d periods: %d KPI keys",
+                len(hist_df),
+                len(kpi),
+            )
+        except Exception as exc:
+            log.warning("[prepare] kpi_snapshot failed (falling back to financial_metrics): %s", exc)
+
     log.info(
-        "[prepare] payload built: policy=%s product=%s age=%s bmi_cat=%s",
+        "[prepare] payload built: policy=%s product=%s age=%s bmi_cat=%s kpi=%s",
         policy_id,
         payload["product_type"],
         applicant.get("age"),
         applicant.get("bmi_category"),
+        "yes" if payload["kpi_snapshot"] else "no",
     )
     return payload
