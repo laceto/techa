@@ -29,6 +29,11 @@ class InsuranceAnalysisState(TypedDict, total=False):
     # ── Injected by Send dispatcher ────────────────────────────────────────────
     agent_id: Annotated[Optional[str], _last]  # set per-dispatch; identifies the active worker
 
+    # ── Set by fraud_triage_node ───────────────────────────────────────────────
+    fraud_risk_level: Annotated[Optional[str], _last]  # low / medium / high / very_high
+    # Derived from claims_snapshot["fraud_risk_level"]. Controls whether the legal_compliance
+    # worker is activated (high or very_high triggers two-wave dispatch).
+
     # ── Set by prepare_node ────────────────────────────────────────────────────
     payload: Annotated[Optional[dict], _last]
     # payload shape:

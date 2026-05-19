@@ -3,11 +3,13 @@ agents/insurance/graph_nodes.py — Node implementations for the InsuranceAnalys
 
 Nodes:
   prepare_node        — validates and enriches the risk profile; stores payload.
+  fraud_triage_node   — reads claims_snapshot["fraud_risk_level"] from the pre-built payload;
+                        writes state["fraud_risk_level"] so the dispatcher can activate
+                        the legal_compliance worker for high/very_high fraud cases.
   worker_node         — single shared node dispatched by Send with agent_id injected;
-                        calls ask_actuarial_analyst / ask_accountant /
-                        ask_medical_underwriter / ask_claims_assessor and appends a WorkerResult.
-  _call_synthesis_llm — compiles all four AI reports into a final underwriting decision brief.
-  synthesise_node     — reads state["results"], formats inputs, delegates to LLM
+                        calls the appropriate ask_* function and appends a WorkerResult.
+  _call_synthesis_llm — compiles specialist reports into a final underwriting decision brief.
+  synthesise_node     — reads state["results"], derives DecisionRecord, delegates to LLM
                         acting as Life Head of Business.
 
 Invariant: state["payload"] is the sole data channel from prepare_node to worker_node.
@@ -151,7 +153,27 @@ Accounting analysis:      {accounting_analysis}
 
 Medical underwriting:     {medical_analysis}
 
-Claims assessment:        {claims_analysis}
+Claims assessment:        {claims_analysis}{legal_addendum}
+"""
+
+
+# ---------------------------------------------------------------------------
+# Fraud section for synthesis prompt (appended when legal_compliance ran)
+# ---------------------------------------------------------------------------
+
+_FRAUD_SECTION_TEMPLATE = """
+
+---
+
+## Legal Compliance & Fraud Assessment
+
+Legal compliance assessment: {legal_analysis}
+
+Summarise:
+1. **Eligibility verdict** — eligible / refer / ineligible and the primary legal ground.
+2. **Non-disclosure materiality** — none / minor / material / voiding.
+3. **Exclusion clauses triggered** — list each applicable clause.
+4. **Recommended action** — payment / refer to SIU / deny with legal notice.
 """
 
 
@@ -185,6 +207,39 @@ def prepare_node(state: InsuranceAnalysisState) -> dict:
     )
 
     return {"payload": payload}
+
+
+# ---------------------------------------------------------------------------
+# fraud_triage_node — reads pre-built claims_snapshot; no LLM call
+# ---------------------------------------------------------------------------
+
+
+def fraud_triage_node(state: InsuranceAnalysisState) -> dict:
+    """
+    Read fraud_risk_level from the already-built claims_snapshot.
+
+    This node adds zero latency — it only reads payload["claims_snapshot"] which
+    was computed synchronously by build_payload() in prepare_node. The result is
+    written to state["fraud_risk_level"] so the Send dispatcher can decide whether
+    to activate the legal_compliance worker.
+
+    Args:
+        state: Must contain "payload" set by prepare_node.
+
+    Returns:
+        {"fraud_risk_level": str}  — one of: low / medium / high / very_high.
+    """
+    payload          = state.get("payload", {})
+    claims_snapshot  = payload.get("claims_snapshot") or {}
+    fraud_risk_level = claims_snapshot.get("fraud_risk_level", "low")
+
+    log.info(
+        "[fraud_triage] policy=%s fraud_risk_level=%s fraud_flags=%s",
+        payload.get("policy_id"),
+        fraud_risk_level,
+        claims_snapshot.get("fraud_flags", []),
+    )
+    return {"fraud_risk_level": fraud_risk_level}
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +291,7 @@ def _call_synthesis_llm(
     accounting_analysis: str,
     medical_analysis: str,
     claims_analysis: str,
+    legal_addendum: str = "",
 ) -> str:
     """
     Call the LLM once as Life Head of Business to compile the final underwriting decision.
@@ -248,6 +304,7 @@ def _call_synthesis_llm(
         accounting_analysis: JSON string of the accountant worker result (or "unavailable").
         medical_analysis:    JSON string of the medical underwriting result (or "unavailable").
         claims_analysis:     JSON string of the claims assessor result (or "unavailable").
+        legal_addendum:      Pre-formatted legal fraud section string (empty when not activated).
 
     Returns:
         Markdown string containing the underwriting decision brief.
@@ -262,13 +319,14 @@ def _call_synthesis_llm(
     llm = ChatOpenAI(model=SYNTHESIS_MODEL, temperature=0)
 
     response = (prompt | llm).invoke({
-        "policy_id":          policy_id,
-        "product_type":       product_type,
-        "assessment_date":    assessment_date,
-        "actuarial_analysis": actuarial_analysis,
+        "policy_id":           policy_id,
+        "product_type":        product_type,
+        "assessment_date":     assessment_date,
+        "actuarial_analysis":  actuarial_analysis,
         "accounting_analysis": accounting_analysis,
-        "medical_analysis":   medical_analysis,
-        "claims_analysis":    claims_analysis,
+        "medical_analysis":    medical_analysis,
+        "claims_analysis":     claims_analysis,
+        "legal_addendum":      legal_addendum,
     })
     return response.content if hasattr(response, "content") else str(response)
 
@@ -297,6 +355,7 @@ def synthesise_node(state: InsuranceAnalysisState) -> dict:
     accounting_str = _fmt("accountant")
     medical_str    = _fmt("medical_underwriting")
     claims_str     = _fmt("claims_assessor")
+    legal_str      = _fmt("legal_compliance")  # "unavailable" when legal worker not activated
 
     # Derive structured decision record deterministically — no LLM call needed
     results = state.get("results", [])
@@ -313,7 +372,18 @@ def synthesise_node(state: InsuranceAnalysisState) -> dict:
         log.error("[synthesise] derive_decision failed: %s", exc, exc_info=True)
         decision_dict = None
 
-    log.info("[synthesise] generating underwriting decision for %s", policy_id)
+    # Append legal fraud section to the human prompt when legal worker ran
+    legal_addendum = (
+        _FRAUD_SECTION_TEMPLATE.format(legal_analysis=legal_str)
+        if legal_str != "unavailable"
+        else ""
+    )
+
+    log.info(
+        "[synthesise] generating underwriting decision for %s (legal=%s)",
+        policy_id,
+        "yes" if legal_addendum else "no",
+    )
     try:
         brief = _call_synthesis_llm(
             policy_id,
@@ -323,6 +393,7 @@ def synthesise_node(state: InsuranceAnalysisState) -> dict:
             accounting_str,
             medical_str,
             claims_str,
+            legal_addendum=legal_addendum,
         )
     except Exception as exc:
         log.error("[synthesise] LLM call failed: %s", exc, exc_info=True)

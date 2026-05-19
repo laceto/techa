@@ -1,14 +1,17 @@
 """
 agents/insurance/agent.py — create_insurance_agent() graph factory.
 
-Builds the LangGraph StateGraph:
-  START → prepare_node → (Send dispatcher) → worker_node → synthesise_node → END
+Builds the LangGraph StateGraph (two-wave fraud triage dispatch):
 
-The dispatcher fans out to worker_node four times — once each for:
-  actuarial, accountant, medical_underwriting, claims_assessor.
+  START → prepare_node → fraud_triage_node → (Send dispatcher) → worker_node
+        → synthesise_node → END
 
+Wave 1 (always): actuarial, accountant, medical_underwriting, claims_assessor.
+Wave 2 (fraud_risk_level = high / very_high): + legal_compliance.
+
+fraud_triage_node reads claims_snapshot["fraud_risk_level"] from the pre-built payload —
+zero latency, no LLM call. The dispatcher uses this value to decide which workers to activate.
 synthesise_node acts as Life Head of Business and makes the final underwriting decision.
-Adding a new specialist requires only updating WORKER_NAMES in _subagents.py.
 """
 
 from __future__ import annotations
@@ -17,13 +20,27 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 
 from techa.agents.insurance.graph_state import InsuranceAnalysisState
-from techa.agents.insurance.graph_nodes import prepare_node, synthesise_node, worker_node
-from techa.agents.insurance._subagents import WORKER_NAMES
+from techa.agents.insurance.graph_nodes import (
+    fraud_triage_node,
+    prepare_node,
+    synthesise_node,
+    worker_node,
+)
+from techa.agents.insurance._subagents import FRAUD_ESCALATION_WORKERS, WORKER_NAMES
 
 
 def _dispatcher(state: InsuranceAnalysisState) -> list[Send]:
-    """Fan out to worker_node once per registered specialist, injecting agent_id via Send."""
-    return [Send("worker_node", {"agent_id": name, **state}) for name in WORKER_NAMES]
+    """
+    Fan out to worker_node for each specialist, injecting agent_id via Send.
+
+    Standard four workers always run. When fraud_risk_level is high or very_high,
+    the legal_compliance worker is added (two-wave dispatch).
+    """
+    workers = list(WORKER_NAMES)
+    fraud_level = state.get("fraud_risk_level") or "low"
+    if fraud_level in ("high", "very_high"):
+        workers.extend(FRAUD_ESCALATION_WORKERS)
+    return [Send("worker_node", {"agent_id": name, **state}) for name in workers]
 
 
 def create_insurance_agent(
@@ -34,9 +51,11 @@ def create_insurance_agent(
     """
     Build and compile the InsuranceAnalysis LangGraph for a single policy application.
 
-    Four specialists run in parallel (actuarial, accountant, medical_underwriting,
-    claims_assessor), then synthesise_node acts as Life Head of Business and
-    produces the final underwriting decision with loading factors and terms.
+    Standard path: four specialists run in parallel (actuarial, accountant,
+    medical_underwriting, claims_assessor). When fraud indicators are elevated
+    (high / very_high), the legal_compliance worker is additionally dispatched.
+    synthesise_node acts as Life Head of Business and produces the final underwriting
+    decision with loading factors, conditions, and a machine-readable DecisionRecord.
 
     Args:
         policy_id:    Unique policy or application reference (required).
@@ -70,15 +89,18 @@ def create_insurance_agent(
         g = create_insurance_agent("APP-2026-001", risk_profile=profile)
         r = g.invoke(g._initial_state)
         print(r["final_output"])
+        print(r["decision"])   # machine-readable DecisionRecord dict
     """
     builder = StateGraph(InsuranceAnalysisState)
 
-    builder.add_node("prepare",     prepare_node)
-    builder.add_node("worker_node", worker_node)
-    builder.add_node("synthesise",  synthesise_node)
+    builder.add_node("prepare",       prepare_node)
+    builder.add_node("fraud_triage",  fraud_triage_node)
+    builder.add_node("worker_node",   worker_node)
+    builder.add_node("synthesise",    synthesise_node)
 
     builder.add_edge(START, "prepare")
-    builder.add_conditional_edges("prepare", _dispatcher)
+    builder.add_edge("prepare", "fraud_triage")
+    builder.add_conditional_edges("fraud_triage", _dispatcher)
     builder.add_edge("worker_node", "synthesise")
     builder.add_edge("synthesise", END)
 

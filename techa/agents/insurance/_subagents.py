@@ -12,7 +12,9 @@ from techa.agents.insurance._tools.ask_actuarial_analyst   import ask_actuarial_
 from techa.agents.insurance._tools.ask_accountant          import ask_accountant
 from techa.agents.insurance._tools.ask_medical_underwriter import ask_medical_underwriter
 from techa.agents.insurance._tools.ask_claims_assessor     import ask_claims_assessor
+from techa.agents.insurance._tools.ask_legal_compliance    import ask_legal_compliance
 
+# Standard four workers — always dispatched
 WORKER_NAMES: list[str] = [
     "actuarial",
     "accountant",
@@ -20,9 +22,15 @@ WORKER_NAMES: list[str] = [
     "claims_assessor",
 ]
 
+# Additional workers activated by fraud_triage_node when fraud_risk_level is high/very_high
+FRAUD_ESCALATION_WORKERS: list[str] = [
+    "legal_compliance",
+]
+
 WORKER_REGISTRY: dict = {
     "actuarial":            ask_actuarial_analyst,
     "accountant":           ask_accountant,
     "medical_underwriting": ask_medical_underwriter,
     "claims_assessor":      ask_claims_assessor,
+    "legal_compliance":     ask_legal_compliance,
 }
