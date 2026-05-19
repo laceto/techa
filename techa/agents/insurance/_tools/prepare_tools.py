@@ -25,6 +25,7 @@ import pandas as pd
 
 from techa.insurance import build_kpi_snapshot
 from techa.underwriting import build_medical_snapshot
+from techa.claims import build_claims_snapshot
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +60,32 @@ _DEMO_PROFILE: dict = {
         "largest_single_claim":      3_200,
         "years_since_last_claim":    3,
         "claim_types":               ["medical_expenses"],
+    },
+    "claim_form": {
+        "claim_type":                    "critical_illness",
+        "date_of_event":                 "2025-10-01",
+        "date_of_submission":            "2025-10-20",
+        "policy_inception_date":         "2020-03-01",
+        "claim_amount_requested":        500_000,
+        "sum_assured":                   500_000,
+        "premium_annual":                3_200,
+        "diagnosis":                     ["acute_myocardial_infarction", "coronary_artery_disease"],
+        "icd_codes":                     ["I21.9", "I25.1"],
+        "treating_physician":            "Dr. A. Patel, Cardiologist",
+        "hospital_name":                 "St. Thomas Hospital, London",
+        "admission_date":                "2025-10-01",
+        "discharge_date":                "2025-10-08",
+        "prognosis":                     "partial_recovery",
+        "treatment_summary":             "Emergency PTCA; stent inserted LAD. Cardiac rehabilitation initiated.",
+        "pre_existing_conditions_declared": ["hypertension"],
+        "medical_history_consistent":    True,
+        "nondisclosure_flag":            False,
+        "documents_submitted":           [
+            "specialist_report",
+            "hospital_records",
+            "medical_report",
+            "discharge_summary",
+        ],
     },
     "financial_metrics": {
         "gross_premium_income":   3_200,
@@ -183,6 +210,7 @@ def build_payload(policy_id: str, risk_profile: dict | None) -> dict:
         "financial_metrics": fin,
         "kpi_snapshot":      None,
         "medical_snapshot":  None,
+        "claims_snapshot":   None,
     }
 
     # ── Accountant KPI snapshot from financial history time series ────────────
@@ -217,13 +245,30 @@ def build_payload(policy_id: str, risk_profile: dict | None) -> dict:
     except Exception as exc:
         log.warning("[prepare] medical_snapshot failed (falling back to raw applicant): %s", exc)
 
+    # ── Claims snapshot from claim form + medical documentation ─────────────
+    claim_form = profile.get("claim_form")
+    if claim_form:
+        try:
+            cls = build_claims_snapshot(claim_form, nan_to_none=True)
+            payload["claims_snapshot"] = cls
+            log.info(
+                "[prepare] claims_snapshot built: type=%s risk=%s loading=%.1f fraud_flags=%s",
+                cls.get("claim_type"),
+                cls.get("claims_risk_level"),
+                cls.get("claims_loading_pct", 0),
+                cls.get("fraud_flags"),
+            )
+        except Exception as exc:
+            log.warning("[prepare] claims_snapshot failed (falling back to claims_history): %s", exc)
+
     log.info(
-        "[prepare] payload built: policy=%s product=%s age=%s bmi_cat=%s kpi=%s med=%s",
+        "[prepare] payload built: policy=%s product=%s age=%s bmi_cat=%s kpi=%s med=%s claims=%s",
         policy_id,
         payload["product_type"],
         applicant.get("age"),
         applicant.get("bmi_category"),
         "yes" if payload["kpi_snapshot"] else "no",
         "yes" if payload["medical_snapshot"] else "no",
+        "yes" if payload["claims_snapshot"] else "no",
     )
     return payload
